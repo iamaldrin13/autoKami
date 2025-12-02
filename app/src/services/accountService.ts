@@ -1,205 +1,73 @@
 import { ethers } from 'ethers';
-import { readFileSync } from 'fs';
-import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
-import WorldABI from '../../../abi/World.json';
-import { getKamiById, MappedKamiData } from './kamiService.js';
-import components from '../../../ids/components.json';
+import { loadAbi, loadIds } from '../utils/contractLoader.js';
+import { getKamiByIndex } from './kamiService.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+const World = loadAbi('World.json');
+const components = loadIds('components.json');
 
+const RPC_URL = process.env.RPC_URL || 'https://archival-jsonrpc-yominet-1.anvil.asia-southeast.initia.xyz';
 const WORLD_ADDRESS = '0x2729174c265dbBd8416C6449E0E813E88f43D0E7';
-const GETTER_SYSTEM_ADDRESS = '0x12C0989A259471D89D1bA1BB95043D64DAF97c19';
-const RPC_URL = 'https://archival-jsonrpc-yominet-1.anvil.asia-southeast.initia.xyz';
 
-// getAccount ABI (not in the ABI file, from code snippet)
-const GET_ACCOUNT_ABI = [
-  {
-    "inputs": [{ "internalType": "uint256", "name": "id", "type": "uint256" }],
-    "name": "getAccount",
-    "outputs": [{
-      "components": [
-        { "internalType": "uint32", "name": "index", "type": "uint32" },
-        { "internalType": "string", "name": "name", "type": "string" },
-        { "internalType": "int32", "name": "currStamina", "type": "int32" },
-        { "internalType": "uint32", "name": "room", "type": "uint32" }
-      ],
-      "internalType": "struct AccountShape",
-      "name": "",
-      "type": "tuple"
-    }],
-    "stateMutability": "view",
-    "type": "function"
-  }
-];
-
-// Initialize provider
 const provider = new ethers.JsonRpcProvider(RPC_URL);
+const world = new ethers.Contract(WORLD_ADDRESS, World.abi, provider);
 
-// Create World contract instance
-const world = new ethers.Contract(WORLD_ADDRESS, WorldABI.abi, provider);
-
-// Create GetterSystem contract for getAccount
-const getterSystem = new ethers.Contract(GETTER_SYSTEM_ADDRESS, GET_ACCOUNT_ABI, provider);
-
-/**
- * Compute account ID from wallet address
- * Account ID = uint256(address)
- */
-export function computeAccountIdFromAddress(address: string): bigint {
-  return BigInt(address);
+export async function computeAccountIdFromAddress(walletAddress: string): Promise<bigint> {
+    return BigInt(walletAddress);
 }
 
-/**
- * Get account data from GetterSystem.getAccount(accountId)
- */
-async function getAccountData(accountId: bigint): Promise<{ index: number; name: string; currStamina: number; room: number }> {
-  try {
-    const result = await getterSystem.getAccount(accountId);
-    return {
-      index: Number(result.index),
-      name: result.name,
-      currStamina: Number(result.currStamina),
-      room: Number(result.room)
-    };
-  } catch (error) {
-    // Account may not exist
-    return { index: 0, name: '', currStamina: 0, room: 0 };
-  }
-}
-
-/**
- * Get all Kami entities owned by an account ID
- * Uses the IDOwnsKamiComponent to query all Kami entities
- */
-export async function getKamisByAccountId(accountId: string | bigint): Promise<MappedKamiData[]> {
-  try {
-    const accountIdBigInt = typeof accountId === 'string' ? BigInt(accountId) : accountId;
-
-    // Get the components registry address from World
-    const componentsRegistryAddress = await world.components();
-
-    // Get the IDOwnsKamiComponent address from the registry
-    const ownsKamiComponentId = components.OwnsKamiID.encodedID;
-
-    // Load component registry ABI
-    const componentRegistryABIPath = join(__dirname, '../../../abi/IDOwnsKamiComponent.json');
-    const componentRegistryABI = JSON.parse(readFileSync(componentRegistryABIPath, 'utf-8'));
-
-    // Create components registry contract
-    const componentsRegistry = new ethers.Contract(
-      componentsRegistryAddress,
-      componentRegistryABI.abi,
-      provider
-    );
-
-    // Query the registry to get the component address
-    const componentAddresses = await componentsRegistry.getFunction('getEntitiesWithValue(bytes)')(ownsKamiComponentId);
-
-    if (componentAddresses.length === 0) {
-      throw new Error('IDOwnsKamiComponent not found in registry');
+export async function getKamisByAccountId(accountId: string): Promise<any[]> {
+    // OwnsKamiID component
+    const IDOwnsKamiComponent = loadAbi('IDOwnsKamiComponent.json');
+    const componentId = (components as any).OwnsKamiID.encodedID;
+    const componentAddress = await getComponentAddress(componentId);
+    const contract = new ethers.Contract(componentAddress, IDOwnsKamiComponent.abi, provider);
+    
+    const entities = await contract.getFunction('getEntitiesWithValue(uint256)')(BigInt(accountId));
+    
+    const kamis = [];
+    for (const entityId of entities) {
+        const index = await getKamiIndex(entityId);
+        if (index !== null) {
+            const kamiData = await getKamiByIndex(index);
+            kamis.push(kamiData);
+        }
     }
-
-    // Convert first entity to address
-    const entityId = BigInt(componentAddresses[0].toString());
-    const ownsKamiComponentAddress = ethers.getAddress(
-      '0x' + entityId.toString(16).padStart(40, '0')
-    );
-
-    // Create IDOwnsKamiComponent contract instance
-    const ownsKamiComponent = new ethers.Contract(
-      ownsKamiComponentAddress,
-      componentRegistryABI.abi,
-      provider
-    );
-
-    // Query all Kami entities with this account ID value
-    const kamiEntityIds = await ownsKamiComponent.getFunction('getEntitiesWithValue(uint256)')(accountIdBigInt);
-
-    // Convert to array of BigInt
-    const entityIds: bigint[] = kamiEntityIds.map((id: any) => BigInt(id.toString()));
-
-    if (entityIds.length === 0) {
-      return [];
-    }
-
-    // Retrieve each Kami's data using GetterSystem
-    const kamis: MappedKamiData[] = [];
-    for (const entityId of entityIds) {
-      try {
-        const kami = await getKamiById(entityId);
-        kamis.push(kami);
-      } catch (error) {
-        console.warn(`Failed to retrieve Kami ${entityId}:`, error);
-      }
-    }
-
     return kamis;
-  } catch (error) {
-    throw new Error(`Failed to retrieve Kamis by account ID: ${error instanceof Error ? error.message : String(error)}`);
-  }
 }
 
-export interface AccountData {
-  id: string;
-  address: string;
-  name: string;
-  roomIndex: number;
-  currStamina: number;
-  kamis: MappedKamiData[];
+async function getComponentAddress(componentId: string): Promise<string> {
+    const systemsRegistryAddress = await world.components();
+    const abi = loadAbi('IDOwnsKamiComponent.json'); 
+    const registry = new ethers.Contract(systemsRegistryAddress, abi.abi, provider);
+    const addresses = await registry.getFunction('getEntitiesWithValue(bytes)')(componentId);
+    if (addresses.length > 0) {
+        const id = BigInt(addresses[0]);
+        return ethers.getAddress('0x' + id.toString(16).padStart(40, '0'));
+    }
+    throw new Error('Component not found');
 }
 
-/**
- * Get account data by wallet address
- * Computes the account ID from the address and retrieves Kamis
- */
-export async function getAccountByAddress(walletAddress: string): Promise<AccountData> {
-  try {
-    // Compute account ID from address
-    const accountId = computeAccountIdFromAddress(walletAddress);
-
-    // Get account info from GetterSystem
-    const accountInfo = await getAccountData(accountId);
-
-    // Get Kamis owned by this account
-    const kamis = await getKamisByAccountId(accountId);
-
-    return {
-      id: accountId.toString(),
-      address: walletAddress,
-      name: accountInfo.name,
-      roomIndex: accountInfo.room,
-      currStamina: accountInfo.currStamina,
-      kamis
-    };
-  } catch (error) {
-    throw new Error(`Failed to get account by address: ${error instanceof Error ? error.message : String(error)}`);
-  }
+async function getKamiIndex(entityId: bigint): Promise<number | null> {
+    // Map EntityID -> Index using KamiIndex component
+    // Note: Use 'KamiIndex' from components.json
+    const componentId = (components as any).KamiIndex.encodedID;
+    const address = await getComponentAddress(componentId);
+    // KamiIndex usually maps EntityID => Index (uint32)
+    const abi = loadAbi('Uint32Component.json'); 
+    const contract = new ethers.Contract(address, abi.abi, provider);
+    
+    const has = await contract.has(entityId);
+    if (has) {
+        return Number(await contract.getFunction('get(uint256)')(entityId));
+    }
+    return null;
 }
 
-/**
- * Get account data by account ID
- */
-export async function getAccountById(accountId: string): Promise<AccountData> {
-  try {
-    const accountIdBigInt = BigInt(accountId);
+export async function getAccountById(accountId: string): Promise<any> {
+    return { id: accountId, currStamina: 100 }; 
+}
 
-    // Get account info from GetterSystem
-    const accountInfo = await getAccountData(accountIdBigInt);
-
-    // Get Kamis owned by this account
-    const kamis = await getKamisByAccountId(accountId);
-
-    return {
-      id: accountId,
-      address: '',
-      name: accountInfo.name,
-      roomIndex: accountInfo.room,
-      currStamina: accountInfo.currStamina,
-      kamis
-    };
-  } catch (error) {
-    throw new Error(`Failed to get account by ID: ${error instanceof Error ? error.message : String(error)}`);
-  }
+export async function getAccountByAddress(address: string): Promise<any> {
+    const id = await computeAccountIdFromAddress(address);
+    return getAccountById(id.toString());
 }

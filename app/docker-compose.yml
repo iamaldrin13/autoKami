@@ -1,17 +1,41 @@
-version: '3.8'
-
 services:
+  ts-kamigotchi:
+    image: tailscale/tailscale:latest
+    container_name: ts-kamigotchi
+    hostname: kamigotchi
+    environment:
+      - TS_AUTHKEY=tskey-auth-k5aniem7tk11CNTRL-fTYyF25cC88SA6mbyGQ988B89FY4zffrA
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_USERSPACE=true 
+    volumes:
+      - ts-data:/var/lib/tailscale
+      # /dev/net/tun is often problematic on Windows/WSL2 without specific kernel modules, 
+      # so we default to userspace networking (tun=false above) for higher compatibility.
+      # If you have tun support, set TS_USERSPACE=false and uncomment below:
+      # - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    restart: unless-stopped
+    ports:
+      - "3009:3000" # Expose 3000 to the host machine (localhost:3000)
+
   kamigotchi-app:
     build: 
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: app/Dockerfile
     image: kamigotchi-app:latest
     container_name: kamigotchi-app
-    ports:
-      - "3000:3000"
+    # Share network namespace with Tailscale container
+    network_mode: service:ts-kamigotchi
     env_file:
       - .env
     environment:
       - NODE_ENV=production
       - PORT=3000
+    depends_on:
+      - ts-kamigotchi
     restart: unless-stopped
+
+volumes:
+  ts-data:

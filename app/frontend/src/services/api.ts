@@ -1,13 +1,11 @@
 import axios from 'axios';
 
 // Determine API URL
-// 1. Use Vite dev server proxy if in dev mode
-// 2. Use VITE_API_URL if set
-// 3. Fallback to localhost:3001 (default backend port)
-// Note: When running as PWA/built static files, import.meta.env.DEV is false.
-const API_URL = import.meta.env.DEV 
-  ? '/api' 
-  : (import.meta.env.VITE_API_URL || 'http://localhost:3001/api');
+// Use relative path '/api' by default to support both:
+// 1. Dev mode (Vite proxy forwards /api -> backend)
+// 2. Production (Express serves frontend & handles /api on same host/port)
+// This ensures remote access (Tailscale/LAN) works without hardcoded localhost.
+const API_URL = import.meta.env.VITE_API_URL || '/api';
 
 const KAMI_IMAGE_BASE = import.meta.env.VITE_KAMI_IMAGE_BASE_URL || 'https://i.test.kamigotchi.io/kami';
 

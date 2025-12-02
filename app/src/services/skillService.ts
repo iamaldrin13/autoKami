@@ -1,13 +1,14 @@
 import { ethers } from 'ethers';
-import { readFileSync } from 'fs';
-import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import WorldABI from '../../../abi/World.json';
-import SkillPointComponentABI from '../../../abi/SkillPointComponent.json';
-import IndexSkillComponentABI from '../../../abi/IndexSkillComponent.json';
-import IDOwnsSkillComponentABI from '../../../abi/IDOwnsSkillComponent.json';
-import components from '../../../ids/components.json';
+import { dirname } from 'path';
+import { loadAbi, loadIds } from '../utils/contractLoader.js';
 import { getSkillInfo, parseSkillBonus } from '../utils/skillMappings.js';
+
+const WorldABI = loadAbi('World.json');
+const SkillPointComponentABI = loadAbi('SkillPointComponent.json');
+const IndexSkillComponentABI = loadAbi('IndexSkillComponent.json');
+const IDOwnsSkillComponentABI = loadAbi('IDOwnsSkillComponent.json');
+const components = loadIds('components.json');
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -64,8 +65,7 @@ export interface KamiSkills {
  */
 async function getComponentAddress(componentId: string): Promise<string> {
   const componentsRegistryAddress = await world.components();
-  const componentRegistryABIPath = join(__dirname, '../../../abi/IDOwnsKamiComponent.json');
-  const componentRegistryABI = JSON.parse(readFileSync(componentRegistryABIPath, 'utf-8'));
+  const componentRegistryABI = loadAbi('IDOwnsKamiComponent.json');
 
   const componentsRegistry = new ethers.Contract(
     componentsRegistryAddress,

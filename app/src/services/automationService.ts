@@ -1,9 +1,12 @@
 import {
-    startHarvest,
-    stopHarvestByKamiId,
-    getKamiState,
-    getHarvestIdForKami
-} from './harvestService.js';
+    getKamigotchis,
+    getOrCreateKamiProfile,
+    updateKamiProfile,
+    logSystemEvent,
+    decryptPrivateKey
+} from './supabaseService.js';
+import { startHarvest, stopHarvestByKamiId, getKamiState } from './harvestService.js';
+import { getKamiByIndex } from './kamiService.js';
 import supabase from './supabaseService.js';
 
 const POLL_INTERVAL_MS = 60000; // Check every 60 seconds
@@ -36,11 +39,12 @@ async function processAutomation() {
             const kamiId = kami.kami_entity_id;
             const userId = kami.user_id;
 
-            try {
-                // 2. Get current state (Status + Health)
-                const { isHarvesting, currentHealth } = await getKamiState(kamiId);
-                
-                // Update local state if mismatched
+                try {
+                    // Check on-chain status
+                    const { state, currentHealth } = await getKamiState(kamiId);
+                    const isHarvesting = state === 1; // 1 = Harvesting
+
+                    // Log heartbeat if harvesting
                 if (isHarvesting !== profile.is_currently_harvesting) {
                     await updateKamiProfile(profile.kamigotchi_id, { is_currently_harvesting: isHarvesting });
                     // Log state correction

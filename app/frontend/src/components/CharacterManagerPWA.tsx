@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { Play, Square, Settings, Trash2, ChevronLeft, ChevronRight, User, RefreshCw, X, Save, Plus, Send, LogOut } from 'lucide-react';
+import { useState, useEffect, useCallback, useMemo, memo } from 'react';
+import { Play, Square, Settings, Trash2, ChevronLeft, ChevronRight, RefreshCw, X, Save, Plus, Send, LogOut } from 'lucide-react';
 import { usePrivy } from '@privy-io/react-auth';
 import { 
   refreshKamigotchis, 
@@ -7,8 +7,6 @@ import {
   getKamigotchis, 
   getSystemLogs,
   deleteKamigotchi,
-  startHarvestKamigotchi,
-  stopHarvestKamigotchi,
   updateAutomation,
   type AutomationSettings,
   addProfile,
@@ -25,6 +23,7 @@ import PowerIcon from '../assets/stats/power.png';
 import HarmonyIcon from '../assets/stats/harmony.png';
 import ViolenceIcon from '../assets/stats/violence.png';
 
+// Affinity icon mapping
 const affinityIcons: Record<string, string> = {
   'normal': 'https://app.kamigotchi.io/assets/normal-BZC5siAy.png',
   'insect': 'https://app.kamigotchi.io/assets/insect-Ban3zu3c.png',
@@ -32,7 +31,7 @@ const affinityIcons: Record<string, string> = {
   'scrap': 'https://app.kamigotchi.io/assets/scrap-Dk1BqVaa.png',
 };
 
-// Themes
+// Theme configurations
 const THEMES = {
   arcade: {
     container: 'bg-gradient-to-br from-blue-600 to-blue-800 font-mono text-black',
@@ -74,7 +73,7 @@ const THEMES = {
     textAccent: 'text-indigo-600',
     highlight: 'ring-4 ring-white/50 border-white',
   }
-};
+} as const;
 
 // Types
 interface FinalStats {
@@ -85,7 +84,7 @@ interface FinalStats {
 }
 
 interface Kami {
-  id: string; // UUID
+  id: string;
   kami_index: number;
   name: string;
   level: number;
@@ -117,9 +116,191 @@ interface OperatorWallet {
   account_id: string;
 }
 
+// Memoized Character Card Component
+const CharacterCard = memo(({ 
+  char, 
+  isSelected, 
+  theme, 
+  currentTheme,
+  onClick 
+}: { 
+  char: Kami; 
+  isSelected: boolean; 
+  theme: any;
+  currentTheme: string;
+  onClick: () => void;
+}) => {
+  // Check if character is dead
+  const isDead = char.currentHealth !== undefined && char.currentHealth !== null && char.currentHealth <= 0;
+  const isAutomationActive = char.automation?.autoHarvestEnabled;
+  
+  // Build card classes
+  let cardClasses = `aspect-[3/4] rounded cursor-pointer transition-all md:hover:scale-105 md:hover:z-10 relative overflow-hidden flex flex-col `;
+  
+  if (currentTheme === 'arcade') {
+    cardClasses += 'border-2 sm:border-4 border-gray-700 bg-white ';
+  } else {
+    cardClasses += 'shadow-lg bg-white/80 backdrop-blur-sm border border-transparent ';
+  }
+
+  if (isDead) {
+    cardClasses = `aspect-[3/4] rounded cursor-pointer transition-all md:hover:scale-105 md:hover:z-10 relative overflow-hidden flex flex-col bg-red-900/20 border-red-500 ring-1 ring-red-500 `;
+  }
+
+  if (isSelected) {
+    cardClasses += `ring-inset ${theme.highlight} `;
+  }
+
+  return (
+    <div onClick={onClick} className={cardClasses}>
+      {/* Automation indicator */}
+      {isAutomationActive && !isDead && (
+        <div className="absolute inset-0 border-4 border-green-500 bg-green-400/10 z-20 pointer-events-none rounded">
+          <div className="absolute top-0 right-0 bg-green-500 text-white text-[0.6rem] font-bold px-1.5 py-0.5 rounded-bl">
+            AUTO
+          </div>
+        </div>
+      )}
+
+      <div className="flex-1 relative bg-gray-100/50 p-0.5 sm:p-1">
+        <img 
+          src={`https://i.test.kamigotchi.io/kami/${char.mediaUri}.gif`}
+          alt={char.name}
+          className="w-full h-full object-contain pixelated"
+          style={{ imageRendering: 'pixelated' }}
+          onError={(e) => {
+            (e.target as HTMLImageElement).src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="100" height="100"%3E%3Crect fill="%23ddd" width="100" height="100"/%3E%3Ctext x="50%25" y="50%25" text-anchor="middle" dy=".3em" fill="%23999"%3E?%3C/text%3E%3C/svg%3E';
+          }}
+        />
+        
+        {/* Name overlay */}
+        <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-[0.5rem] sm:text-[0.6rem] text-center font-bold truncate p-0.5 backdrop-blur-[2px]">
+          {char.name}
+        </div>
+      </div>
+    </div>
+  );
+});
+
+CharacterCard.displayName = 'CharacterCard';
+
+// Memoized Character Details Component
+const CharacterDetails = memo(({ char, theme, onToggleAutomation, onOpenSettings }: { 
+  char: Kami; 
+  theme: any;
+  onToggleAutomation: (id: string) => void;
+  onOpenSettings: () => void;
+}) => (
+  <>
+    {/* Character sprite */}
+    <div className={`${theme.card} p-6 mb-4 relative`}>
+      <img 
+        src={`https://i.test.kamigotchi.io/kami/${char.mediaUri}.gif`}
+        alt={char.name}
+        className="w-full h-40 object-contain pixelated mx-auto"
+        style={{ imageRendering: 'pixelated' }}
+        onError={(e) => {
+          (e.target as HTMLImageElement).src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="100" height="100"%3E%3Crect fill="%23ddd" width="100" height="100"/%3E%3Ctext x="50%25" y="50%25" text-anchor="middle" dy=".3em" fill="%23999"%3E?%3C/text%3E%3C/svg%3E';
+        }}
+      />
+      
+      {/* Name overlay */}
+      <div className="absolute top-2 left-2 right-2 text-center">
+        <span className="bg-black/60 text-white px-3 py-1 rounded-full text-sm font-bold backdrop-blur-sm shadow-sm inline-block truncate max-w-full border border-white/20">
+          {char.name}
+        </span>
+      </div>
+
+      {/* Level badge */}
+      <div className="absolute bottom-2 left-2">
+        <span className="bg-black/60 text-yellow-400 px-2 py-1 rounded text-xs font-bold backdrop-blur-sm shadow-sm border border-white/20">
+          Lv.{char.level}
+        </span>
+      </div>
+
+      {/* Affinity icons */}
+      <div className="absolute bottom-2 right-2 flex flex-row gap-1 z-10">
+        {char.affinities.map((aff, i) => (
+          affinityIcons[aff.toLowerCase()] && (
+            <img 
+              key={`${aff}-${i}`} 
+              src={affinityIcons[aff.toLowerCase()]}
+              alt={aff} 
+              className="w-6 h-6 drop-shadow-md" 
+              title={aff} 
+            />
+          )
+        ))}
+      </div>
+    </div>
+
+    {/* Stats display */}
+    <div className={`${theme.card} p-3 space-y-2 mb-4`}>
+      <StatRow icon={HealthIcon} label="HEALTH" value={char.finalStats.health} />
+      <StatRow icon={PowerIcon} label="POWER" value={char.finalStats.power} />
+      <StatRow icon={ViolenceIcon} label="VIOLENCE" value={char.finalStats.violence} />
+      <StatRow icon={HarmonyIcon} label="HARMONY" value={char.finalStats.harmony} />
+    </div>
+
+    {/* Status indicator */}
+    <div className={`mb-4 p-3 ${theme.card} text-center`}>
+      <div className="font-bold mb-1">Status</div>
+      <div className={`font-bold ${char.running ? 'text-green-500' : 'text-gray-500'}`}>
+        {char.running ? '● Running' : '○ Stopped'}
+      </div>
+    </div>
+
+    {/* Start/Stop button */}
+    <button
+      onClick={() => onToggleAutomation(char.id)}
+      className={`
+        w-full py-3 px-4 ${theme.button} flex items-center justify-center gap-2 text-white mb-2
+        ${char.running 
+          ? 'bg-red-500 hover:bg-red-600 border-red-700' 
+          : 'bg-green-500 hover:bg-green-600 border-green-700'}
+      `}
+    >
+      {char.running ? (
+        <>
+          <Square className="w-5 h-5" fill="white" />
+          STOP
+        </>
+      ) : (
+        <>
+          <Play className="w-5 h-5" fill="white" />
+          START
+        </>
+      )}
+    </button>
+
+    {/* Settings button */}
+    <button
+      onClick={onOpenSettings}
+      className={`w-full py-3 px-4 ${theme.button} flex items-center justify-center gap-2 bg-gray-700 hover:bg-gray-600 text-white`}
+    >
+      <Settings className="w-5 h-5" />
+      SETTINGS
+    </button>
+  </>
+));
+
+CharacterDetails.displayName = 'CharacterDetails';
+
+// Stat row component
+const StatRow = memo(({ icon, label, value }: { icon: string; label: string; value: number }) => (
+  <div className="flex justify-between items-center">
+    <div className="flex items-center gap-2">
+      <img src={icon} alt={label} className="w-4 h-4" />
+      <span className="font-bold">{label}:</span>
+    </div>
+    <span>{value}</span>
+  </div>
+));
+
+StatRow.displayName = 'StatRow';
+
 const CharacterManagerPWA = () => {
   const { user, authenticated, logout } = usePrivy();
-  const [loggedInAccount, setLoggedInAccount] = useState('Loading...');
   const [profiles, setProfiles] = useState<OperatorWallet[]>([]);
   const [currentProfileIndex, setCurrentProfileIndex] = useState(0);
   const [selectedChar, setSelectedChar] = useState<Kami | null>(null);
@@ -142,39 +323,34 @@ const CharacterManagerPWA = () => {
   const [newProfile, setNewProfile] = useState({ name: '', address: '', privateKey: '' });
   const [telegramConfig, setTelegramConfig] = useState({ botToken: '', chatId: '' });
 
-  // Load Backgrounds
+  // Load backgrounds on mount
   useEffect(() => {
     const bgs = getBackgroundList();
     setBackgroundList(bgs);
   }, []);
 
-  // Update User Display & Load Settings
+  // Update user display and load settings
   useEffect(() => {
     if (authenticated && user) {
-      setLoggedInAccount(user.email?.address || user.wallet?.address || user.id);
       
-      // Load user settings
       getUserSettings(user.id).then(({ user: settings }) => {
         if (settings) {
-            setTelegramConfig({
-                botToken: settings.telegram_bot_token || '',
-                chatId: settings.telegram_chat_id || ''
-            });
-            // Load theme if saved
-            const savedTheme = localStorage.getItem('kami_theme') as keyof typeof THEMES;
-            if (savedTheme && THEMES[savedTheme]) setCurrentTheme(savedTheme);
-            
-            const savedBg = localStorage.getItem('kami_bg');
-            if (savedBg) setCurrentBackground(savedBg);
+          setTelegramConfig({
+            botToken: settings.telegram_bot_token || '',
+            chatId: settings.telegram_chat_id || ''
+          });
+          
+          const savedTheme = localStorage.getItem('kami_theme') as keyof typeof THEMES;
+          if (savedTheme && THEMES[savedTheme]) setCurrentTheme(savedTheme);
+          
+          const savedBg = localStorage.getItem('kami_bg');
+          if (savedBg) setCurrentBackground(savedBg);
         }
       }).catch(err => console.error('Failed to load user settings', err));
-
-    } else {
-      setLoggedInAccount('Guest');
     }
   }, [authenticated, user]);
 
-  // Fetch Profiles (Operator Wallets) via API
+  // Fetch operator wallet profiles
   useEffect(() => {
     const fetchProfiles = async () => {
       if (!authenticated || !user) return;
@@ -182,9 +358,9 @@ const CharacterManagerPWA = () => {
       try {
         const data = await getProfiles(user.id);
         const wallets = data.profiles.map(p => ({
-            id: p.id,
-            name: p.name,
-            account_id: p.accountId
+          id: p.id,
+          name: p.name,
+          account_id: p.accountId
         }));
 
         if (wallets && wallets.length > 0) {
@@ -194,7 +370,6 @@ const CharacterManagerPWA = () => {
         }
       } catch (error) {
         console.error('Error fetching profiles:', error);
-        // Fallback
         setProfiles([{ id: 'default', name: 'Main Profile', account_id: 'default' }]);
       }
     };
@@ -202,7 +377,7 @@ const CharacterManagerPWA = () => {
     fetchProfiles();
   }, [authenticated, user, refreshKey, isSettingsModalOpen]);
 
-  // Fetch Data via API
+  // Fetch kamigotchis and system logs
   useEffect(() => {
     const fetchData = async () => {
       if (!authenticated || !user || profiles.length === 0) return;
@@ -214,33 +389,31 @@ const CharacterManagerPWA = () => {
         const { kamigotchis } = await getKamigotchis(user.id);
         
         const mappedCharacters: Kami[] = kamigotchis
-            .filter((k: any) => {
-                if (currentProfile.id === 'default') return true;
-                return k.operator_wallet_id === currentProfile.id;
-            })
-            .map((k: any) => {
-                return {
-                    id: k.id,
-                    kami_index: k.index,
-                    name: k.name || `Kami #${k.index}`,
-                    level: k.level,
-                    mediaUri: k.mediaURI || k.index.toString(),
-                    running: k.automation?.isCurrentlyHarvesting || false,
-                    entity_id: k.entityId,
-                    operator_wallet_id: k.operator_wallet_id,
-                    finalStats: k.finalStats || { health: 0, power: 0, harmony: 0, violence: 0 },
-                    currentHealth: k.currentHealth,
-                    affinities: k.affinities || [],
-                    automation: k.automation,
-                    room: k.room || { index: 0, name: 'Unknown' }
-                };
-            });
+          .filter((k: any) => {
+            if (currentProfile.id === 'default') return true;
+            return k.operator_wallet_id === currentProfile.id;
+          })
+          .map((k: any) => ({
+            id: k.id,
+            kami_index: k.index,
+            name: k.name || `Kami #${k.index}`,
+            level: k.level,
+            mediaUri: k.mediaURI || k.index.toString(),
+            running: k.automation?.autoHarvestEnabled || false,
+            entity_id: k.entityId,
+            operator_wallet_id: k.operator_wallet_id,
+            finalStats: k.finalStats || { health: 0, power: 0, harmony: 0, violence: 0 },
+            currentHealth: k.currentHealth,
+            affinities: k.affinities || [],
+            automation: k.automation,
+            room: k.room || { index: 0, name: 'Unknown' }
+          }));
 
         setCharacters(mappedCharacters);
         
         if (selectedChar) {
-            const updatedSelected = mappedCharacters.find(c => c.id === selectedChar.id);
-            if (updatedSelected) setSelectedChar(updatedSelected);
+          const updatedSelected = mappedCharacters.find(c => c.id === selectedChar.id);
+          if (updatedSelected) setSelectedChar(updatedSelected);
         }
 
         const { logs } = await getSystemLogs(user.id);
@@ -262,13 +435,21 @@ const CharacterManagerPWA = () => {
     fetchData();
   }, [authenticated, user, profiles, currentProfileIndex, refreshKey]);
 
-  const handleRefresh = async () => {
+  // Add log entry
+  const addLog = useCallback((message: string, type: 'info' | 'success' | 'warning' | 'error' = 'info') => {
+    const now = new Date();
+    const time = now.toLocaleTimeString('en-US', { hour12: false });
+    setSystemLogs(prev => [{ id: Math.random().toString(), time, message, type }, ...prev.slice(0, 49)]);
+  }, []);
+
+  // Refresh kamigotchis from blockchain
+  const handleRefresh = useCallback(async () => {
     if (!user?.id) return;
     
     const currentProfile = profiles[currentProfileIndex];
     if (!currentProfile || currentProfile.id === 'default') {
-        addLog('Cannot refresh default profile. Please add an Operator Wallet.', 'warning');
-        return;
+      addLog('Cannot refresh default profile. Please add an Operator Wallet.', 'warning');
+      return;
     }
 
     setIsRefreshing(true);
@@ -287,15 +468,10 @@ const CharacterManagerPWA = () => {
     } finally {
       setIsRefreshing(false);
     }
-  };
+  }, [user?.id, profiles, currentProfileIndex, addLog]);
 
-  const addLog = (message: string, type: 'info' | 'success' | 'warning' | 'error' = 'info') => {
-    const now = new Date();
-    const time = now.toLocaleTimeString('en-US', { hour12: false });
-    setSystemLogs(prev => [{ id: Math.random().toString(), time, message, type }, ...prev.slice(0, 49)]);
-  };
-
-  const toggleAutomation = async (charId: string) => {
+  // Toggle automation on/off
+  const toggleAutomation = useCallback(async (charId: string) => {
     const char = characters.find(c => c.id === charId);
     if (!char) return;
 
@@ -306,282 +482,173 @@ const CharacterManagerPWA = () => {
     addLog(`Character "${char.name}" automation ${newState ? 'starting...' : 'stopping...'}`, 'info');
 
     try {
-      if (newState) {
-          await startHarvestKamigotchi(char.id);
-      } else {
-          await stopHarvestKamigotchi(char.id);
-      }
+      // Toggle automation setting
+      const { success } = await updateAutomation(char.id, { autoHarvestEnabled: newState });
       
-      addLog(`Character "${char.name}" automation ${newState ? 'started' : 'stopped'}`, 'success');
+      if (success) {
+        addLog(`Character "${char.name}" automation ${newState ? 'started' : 'stopped'}`, 'success');
+      } else {
+        throw new Error('Backend returned failure');
+      }
 
     } catch (err: any) {
-        console.error('Failed to toggle automation', err);
-        setCharacters(chars => chars.map(c => c.id === charId ? { ...c, running: originalState } : c));
-        addLog(`Failed to toggle automation: ${err.message}`, 'error');
+      console.error('Failed to toggle automation', err);
+      setCharacters(chars => chars.map(c => c.id === charId ? { ...c, running: originalState } : c));
+      addLog(`Failed to toggle automation: ${err.message}`, 'error');
     }
-  };
+  }, [characters, addLog]);
 
-  const deleteCharacter = async (charId: string) => {
+  // Delete kamigotchi
+  const deleteCharacter = useCallback(async (charId: string) => {
     const char = characters.find(c => c.id === charId);
     if (!char) return;
 
     if (confirm(`Are you sure you want to delete ${char.name}?`)) {
       try {
-          await deleteKamigotchi(char.id);
-          setCharacters(chars => chars.filter(char => char.id !== charId));
-          if (selectedChar?.id === charId) setSelectedChar(null);
-          addLog(`Character "${char.name}" deleted`, 'warning');
+        await deleteKamigotchi(char.id);
+        setCharacters(chars => chars.filter(char => char.id !== charId));
+        if (selectedChar?.id === charId) setSelectedChar(null);
+        addLog(`Character "${char.name}" deleted`, 'warning');
       } catch (err: any) {
-          console.error('Failed to delete character', err);
-          addLog(`Failed to delete character: ${err.message}`, 'error');
+        console.error('Failed to delete character', err);
+        addLog(`Failed to delete character: ${err.message}`, 'error');
       }
     }
-  };
+  }, [characters, selectedChar, addLog]);
 
-  const openConfigModal = () => {
+  // Open config modal
+  const openConfigModal = useCallback(() => {
     if (selectedChar) {
-        setConfigKami(selectedChar);
-        setIsConfigModalOpen(true);
+      setConfigKami(selectedChar);
+      setIsConfigModalOpen(true);
     }
-  };
+  }, [selectedChar]);
 
-  const handleSaveConfig = async (settings: Partial<AutomationSettings>) => {
+  // Save config changes
+  const handleSaveConfig = useCallback(async (settings: Partial<AutomationSettings>) => {
     if (!configKami) return;
 
     try {
-        const { success } = await updateAutomation(configKami.id, settings);
-        if (success) {
-            addLog(`Configuration updated for ${configKami.name}`, 'success');
-            setCharacters(chars => chars.map(c => 
-                c.id === configKami.id ? { ...c, automation: { ...c.automation, ...settings } } : c
-            ));
-            if (selectedChar?.id === configKami.id) {
-                setSelectedChar(prev => prev ? { ...prev, automation: { ...prev.automation, ...settings } } : null);
-            }
-            setIsConfigModalOpen(false);
-        } else {
-            addLog('Failed to update configuration', 'error');
+      const { success } = await updateAutomation(configKami.id, settings);
+      if (success) {
+        addLog(`Configuration updated for ${configKami.name}`, 'success');
+        setCharacters(chars => chars.map(c => 
+          c.id === configKami.id ? { ...c, automation: { ...c.automation, ...settings } } : c
+        ));
+        if (selectedChar?.id === configKami.id) {
+          setSelectedChar(prev => prev ? { ...prev, automation: { ...prev.automation, ...settings } } : null);
         }
+        setIsConfigModalOpen(false);
+      } else {
+        addLog('Failed to update configuration', 'error');
+      }
     } catch (error: any) {
-        console.error('Update config error:', error);
-        addLog(`Update config error: ${error.message}`, 'error');
+      console.error('Update config error:', error);
+      addLog(`Update config error: ${error.message}`, 'error');
     }
-  };
+  }, [configKami, selectedChar, addLog]);
 
-  const switchProfile = (direction: number) => {
+  // Switch between profiles
+  const switchProfile = useCallback((direction: number) => {
     const newIndex = (currentProfileIndex + direction + profiles.length) % profiles.length;
     setCurrentProfileIndex(newIndex);
     addLog(`Profile switched to ${profiles[newIndex]?.name || 'Unknown'}`, 'info');
-  };
+  }, [currentProfileIndex, profiles, addLog]);
 
-  const getImageUrl = (mediaUri: string) => {
-    return `https://i.test.kamigotchi.io/kami/${mediaUri}.gif`;
-  };
-
-  const handleSaveProfile = async () => {
+  // Save new operator profile
+  const handleSaveProfile = useCallback(async () => {
     if (!user?.id || !newProfile.name || !newProfile.privateKey) return;
     
     if (!newProfile.privateKey.startsWith('0x') && newProfile.privateKey.length !== 64 && newProfile.privateKey.length !== 66) {
-        alert('Invalid private key format');
-        return;
+      alert('Invalid private key format');
+      return;
     }
 
     try {
-        const { success, profile } = await addProfile(user.id, newProfile.name, newProfile.address, newProfile.privateKey);
-        if (success) {
-            addLog(`Profile "${profile.name}" added successfully`, 'success');
-            setNewProfile({ name: '', address: '', privateKey: '' });
-            setRefreshKey(prev => prev + 1);
-        } else {
-            addLog('Failed to add profile', 'error');
-        }
+      const { success, profile } = await addProfile(user.id, newProfile.name, newProfile.address, newProfile.privateKey);
+      if (success) {
+        addLog(`Profile "${profile.name}" added successfully`, 'success');
+        setNewProfile({ name: '', address: '', privateKey: '' });
+        setRefreshKey(prev => prev + 1);
+      } else {
+        addLog('Failed to add profile', 'error');
+      }
     } catch (error: any) {
-        console.error('Add profile error:', error);
-        addLog(`Add profile error: ${error.message}`, 'error');
+      console.error('Add profile error:', error);
+      addLog(`Add profile error: ${error.message}`, 'error');
     }
-  };
+  }, [user?.id, newProfile, addLog]);
 
-  const handleSaveTelegram = async () => {
+  // Save telegram settings
+  const handleSaveTelegram = useCallback(async () => {
     if (!user?.id) return;
     
     try {
-        const { success } = await updateTelegramSettings(user.id, telegramConfig.botToken, telegramConfig.chatId);
-        if (success) {
-            addLog('Telegram settings saved', 'success');
-        } else {
-            addLog('Failed to save Telegram settings', 'error');
-        }
+      const { success } = await updateTelegramSettings(user.id, telegramConfig.botToken, telegramConfig.chatId);
+      if (success) {
+        addLog('Telegram settings saved', 'success');
+      } else {
+        addLog('Failed to save Telegram settings', 'error');
+      }
     } catch (error: any) {
-        console.error('Telegram settings error:', error);
-        addLog(`Telegram settings error: ${error.message}`, 'error');
+      console.error('Telegram settings error:', error);
+      addLog(`Telegram settings error: ${error.message}`, 'error');
     }
-  };
+  }, [user?.id, telegramConfig, addLog]);
 
-  const handleTestTelegram = async () => {
+  // Test telegram notification
+  const handleTestTelegram = useCallback(async () => {
     if (!user?.id) return;
     addLog('Sending test message...', 'info');
     try {
-        const { success, error } = await sendTestTelegramMessage(user.id);
-        if (success) {
-            addLog('Test message sent successfully!', 'success');
-        } else {
-            addLog(`Failed to send test message: ${error}`, 'error');
-        }
+      const { success, error } = await sendTestTelegramMessage(user.id);
+      if (success) {
+        addLog('Test message sent successfully!', 'success');
+      } else {
+        addLog(`Failed to send test message: ${error}`, 'error');
+      }
     } catch (error: any) {
-        addLog(`Test message error: ${error.message}`, 'error');
+      addLog(`Test message error: ${error.message}`, 'error');
     }
-  };
+  }, [user?.id, addLog]);
 
-  const handleThemeChange = (theme: keyof typeof THEMES) => {
+  // Change theme
+  const handleThemeChange = useCallback((theme: keyof typeof THEMES) => {
     setCurrentTheme(theme);
     localStorage.setItem('kami_theme', theme);
-  };
+  }, []);
 
-  const handleBackgroundChange = (url: string) => {
+  // Change background
+  const handleBackgroundChange = useCallback((url: string) => {
     setCurrentBackground(url);
     localStorage.setItem('kami_bg', url);
-  };
+  }, []);
 
-  const theme = THEMES[currentTheme];
+  // Get current theme config
+  const theme = useMemo(() => THEMES[currentTheme], [currentTheme]);
 
-  // Helper to render character details (shared between desktop panel and mobile modal)
-  const renderCharacterDetails = (char: Kami) => (
-    <>
-        {/* Character Sprite Display */}
-        <div className={`${theme.card} p-6 mb-4 relative`}>
-            <img 
-            src={getImageUrl(char.mediaUri)}
-            alt={char.name}
-            className="w-full h-40 object-contain pixelated mx-auto"
-            style={{ imageRendering: 'pixelated' }}
-            onError={(e) => {
-                (e.target as HTMLImageElement).src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="100" height="100"%3E%3Crect fill="%23ddd" width="100" height="100"/%3E%3Ctext x="50%25" y="50%25" text-anchor="middle" dy=".3em" fill="%23999"%3E?%3C/text%3E%3C/svg%3E';
-            }}
-            />
-            
-            {/* Name Overlay (Top) */}
-            <div className="absolute top-2 left-2 right-2 text-center">
-                <span className="bg-black/60 text-white px-3 py-1 rounded-full text-sm font-bold backdrop-blur-sm shadow-sm inline-block truncate max-w-full border border-white/20">
-                    {char.name}
-                </span>
-            </div>
-
-            {/* Level Overlay (Bottom Left) */}
-            <div className="absolute bottom-2 left-2">
-                <span className="bg-black/60 text-yellow-400 px-2 py-1 rounded text-xs font-bold backdrop-blur-sm shadow-sm border border-white/20">
-                    Lv.{char.level}
-                </span>
-            </div>
-
-            {/* Affinities Overlay */}
-            <div className="absolute bottom-2 right-2 flex flex-row gap-1 z-10">
-            {char.affinities.map((aff, i) => (
-                affinityIcons[aff.toLowerCase()] && (
-                <img 
-                    key={`${aff}-${i}`} 
-                    src={affinityIcons[aff.toLowerCase()]}
-                    alt={aff} 
-                    className="w-6 h-6 drop-shadow-md" 
-                    title={aff} 
-                />
-                )
-            ))}
-            </div>
-        </div>
-
-        {/* Stats Display */}
-        <div className={`${theme.card} p-3 space-y-2 mb-4`}>
-            <div className="flex justify-between items-center">
-            <div className="flex items-center gap-2">
-                <img src={HealthIcon} alt="HP" className="w-4 h-4" />
-                <span className="font-bold">HEALTH:</span>
-            </div>
-            <span>{char.finalStats.health}</span>
-            </div>
-            <div className="flex justify-between items-center">
-            <div className="flex items-center gap-2">
-                <img src={PowerIcon} alt="ATK" className="w-4 h-4" />
-                <span className="font-bold">POWER:</span>
-            </div>
-            <span>{char.finalStats.power}</span>
-            </div>
-            <div className="flex justify-between items-center">
-            <div className="flex items-center gap-2">
-                <img src={ViolenceIcon} alt="DEF" className="w-4 h-4" />
-                <span className="font-bold">VIOLENCE:</span>
-            </div>
-            <span>{char.finalStats.violence}</span> 
-            </div>
-            <div className="flex justify-between items-center">
-            <div className="flex items-center gap-2">
-                <img src={HarmonyIcon} alt="HRM" className="w-4 h-4" />
-                <span className="font-bold">HARMONY:</span>
-            </div>
-            <span>{char.finalStats.harmony}</span>
-            </div>
-        </div>
-
-        {/* Status */}
-        <div className={`mb-4 p-3 ${theme.card} text-center`}>
-            <div className="font-bold mb-1">Status</div>
-            <div className={`font-bold ${char.running ? 'text-green-500' : 'text-gray-500'}`}>
-            {char.running ? '● Running' : '○ Stopped'}
-            </div>
-        </div>
-
-        {/* Automation Control */}
-        <button
-            onClick={() => toggleAutomation(char.id)}
-            className={`
-            w-full py-3 px-4 ${theme.button} flex items-center justify-center gap-2 text-white
-            ${char.running 
-                ? 'bg-red-500 hover:bg-red-600 border-red-700' 
-                : 'bg-green-500 hover:bg-green-600 border-green-700'}
-            `}
-        >
-            {char.running ? (
-            <>
-                <Square className="w-5 h-5" fill="white" />
-                STOP
-            </>
-            ) : (
-            <>
-                <Play className="w-5 h-5" fill="white" />
-                START
-            </>
-            )}
-        </button>
-    </>
-  );
+  // Get current profile
+  const currentProfile = useMemo(() => profiles[currentProfileIndex], [profiles, currentProfileIndex]);
 
   return (
     <div 
-        className={`h-screen flex flex-col overflow-hidden p-1 sm:p-2 transition-all duration-500 ${theme.container}`}
-        style={currentTheme === 'frosted' && currentBackground ? { backgroundImage: `url(${currentBackground})` } : {}}
+      className={`h-screen flex flex-col overflow-hidden p-1 sm:p-2 transition-all duration-500 ${theme.container}`}
+      style={currentTheme === 'frosted' && currentBackground ? { backgroundImage: `url(${currentBackground})` } : {}}
     >
       <div className="max-w-7xl mx-auto w-full flex-1 flex flex-col min-h-0">
-        {/* Header Bar */}
-        <div className={`${theme.header} p-2 sm:p-3 mb-2 flex justify-between items-center flex-shrink-0`}>
-          <div className="flex items-center gap-2 truncate">
-            <User className={`w-5 h-5 ${theme.textAccent}`} />
-            <span className="font-bold hidden sm:inline">Logged in as:</span>
-            <span className={`${theme.textAccent} truncate text-sm sm:text-base`}>{loggedInAccount}</span>
-          </div>
-          
-          <button 
-            onClick={() => setIsSettingsModalOpen(true)}
-            className={`p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors ${theme.textAccent}`}
-          >
-            <Settings className="w-6 h-6" />
-          </button>
-        </div>
-
         <div className="flex-1 flex flex-col lg:flex-row gap-2 min-h-0">
           {/* Left Panel - Character Display (Desktop Only) */}
           <div className="hidden lg:block lg:w-64 flex-shrink-0 h-full overflow-y-auto scrollbar-hide">
             <div className={`${theme.card} overflow-hidden h-full`}>
               <div className="p-4 h-full overflow-y-auto">
-                {selectedChar ? renderCharacterDetails(selectedChar) : (
+                {selectedChar ? (
+                  <CharacterDetails 
+                    char={selectedChar} 
+                    theme={theme} 
+                    onToggleAutomation={toggleAutomation}
+                    onOpenSettings={() => setIsSettingsModalOpen(true)}
+                  />
+                ) : (
                   <div className="p-8 text-center opacity-50 h-full flex flex-col justify-center">
                     <p className="text-lg font-bold mb-2">No Character</p>
                     <p className="text-sm">Select a character to view details</p>
@@ -604,7 +671,7 @@ const CharacterManagerPWA = () => {
                   <ChevronLeft className="w-5 h-5" />
                 </button>
                 <span className={`font-bold text-base sm:text-xl px-2 sm:px-4 py-1 rounded border-2 truncate max-w-[150px] sm:max-w-none text-center ${currentTheme === 'frosted' ? 'bg-white/50 border-white/50' : 'bg-white border-gray-800'}`}>
-                  {profiles[currentProfileIndex]?.name || 'Loading...'}
+                  {currentProfile?.name || 'Loading...'}
                 </span>
                 <button 
                   onClick={() => switchProfile(1)}
@@ -617,73 +684,25 @@ const CharacterManagerPWA = () => {
               {/* Character Grid */}
               <div className={`flex-1 p-2 sm:p-4 overflow-y-auto overflow-x-hidden grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8 gap-2 sm:gap-3 auto-rows-min ${currentTheme === 'frosted' ? 'bg-transparent' : 'bg-green-300'}`}>
                 {loading ? (
-                    <div className="col-span-full text-center p-4 font-bold">Loading Kamis...</div>
+                  <div className="col-span-full text-center p-4 font-bold">Loading Kamis...</div>
                 ) : characters.length === 0 ? (
-                    <div className="col-span-full text-center p-4 font-bold">No Kamis Found</div>
+                  <div className="col-span-full text-center p-4 font-bold">No Kamis Found</div>
                 ) : (
-                    characters.map(char => {
-                        // Treat null/undefined as Alive to prevent false "Dead" state on initial load/stale data
-                        const isDead = char.currentHealth !== undefined && char.currentHealth !== null && char.currentHealth <= 0;
-                        const isAutomationActive = char.automation?.autoHarvestEnabled;
-                        
-                        // Base Theme Classes
-                        let cardClasses = `aspect-[3/4] rounded cursor-pointer transition-all md:hover:scale-105 md:hover:z-10 relative overflow-hidden flex flex-col `;
-                        
-                        if (currentTheme === 'arcade') {
-                            cardClasses += 'border-2 sm:border-4 border-gray-700 bg-white ';
-                        } else {
-                            cardClasses += 'shadow-lg bg-white/80 backdrop-blur-sm border border-transparent ';
+                  characters.map(char => (
+                    <CharacterCard
+                      key={char.id}
+                      char={char}
+                      isSelected={selectedChar?.id === char.id}
+                      theme={theme}
+                      currentTheme={currentTheme}
+                      onClick={() => {
+                        setSelectedChar(char);
+                        if (window.innerWidth < 1024) {
+                          setIsMobileDetailsOpen(true);
                         }
-
-                        // Dead Override
-                        if (isDead) {
-                            cardClasses = `aspect-[3/4] rounded cursor-pointer transition-all md:hover:scale-105 md:hover:z-10 relative overflow-hidden flex flex-col bg-red-900/20 border-red-500 ring-1 ring-red-500 `;
-                        }
-
-                        // Selection Highlight
-                        if (selectedChar?.id === char.id) {
-                            cardClasses += `ring-inset ${theme.highlight} `;
-                        }
-
-                        return (
-                        <div
-                            key={char.id}
-                            onClick={() => {
-                                setSelectedChar(char);
-                                if (window.innerWidth < 1024) {
-                                    setIsMobileDetailsOpen(true);
-                                }
-                            }}
-                            className={cardClasses}
-                        >
-                            {/* Automation Overlay */}
-                            {isAutomationActive && !isDead && (
-                                <div className="absolute inset-0 border-4 border-green-500 bg-green-400/10 z-20 pointer-events-none rounded">
-                                    <div className="absolute top-0 right-0 bg-green-500 text-white text-[0.6rem] font-bold px-1.5 py-0.5 rounded-bl">
-                                        AUTO
-                                    </div>
-                                </div>
-                            )}
-
-                            <div className="flex-1 relative bg-gray-100/50 p-0.5 sm:p-1">
-                                <img 
-                                src={getImageUrl(char.mediaUri)}
-                            alt={char.name}
-                            className="w-full h-full object-contain pixelated"
-                            style={{ imageRendering: 'pixelated' }}
-                            onError={(e) => {
-                                (e.target as HTMLImageElement).src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="100" height="100"%3E%3Crect fill="%23ddd" width="100" height="100"/%3E%3Ctext x="50%25" y="50%25" text-anchor="middle" dy=".3em" fill="%23999"%3E?%3C/text%3E%3C/svg%3E';
-                            }}
-                            />
-                            
-                            {/* Name Overlay */}
-                            <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-[0.5rem] sm:text-[0.6rem] text-center font-bold truncate p-0.5 backdrop-blur-[2px]">
-                                {char.name}
-                            </div>
-                        </div>
-                    </div>
-                    );
-                    })
+                      }}
+                    />
+                  ))
                 )}
               </div>
 
@@ -762,331 +781,340 @@ const CharacterManagerPWA = () => {
       {/* Mobile Character Details Modal */}
       {isMobileDetailsOpen && selectedChar && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-40 p-4 lg:hidden font-mono">
-            <div className={`${theme.modal} w-full max-w-md overflow-hidden shadow-2xl max-h-[90vh] overflow-y-auto`}>
-                <div className="p-4 border-b-4 border-gray-700 flex justify-between items-center bg-gray-800">
-                    <h2 className="text-xl font-bold flex items-center gap-2">
-                        CHARACTER DETAILS
-                    </h2>
-                    <button onClick={() => setIsMobileDetailsOpen(false)} className="text-gray-400 hover:text-white">
-                        <X className="w-6 h-6" />
-                    </button>
-                </div>
-                <div className="p-4">
-                    {renderCharacterDetails(selectedChar)}
-                </div>
+          <div className={`${theme.modal} w-full max-w-md overflow-hidden shadow-2xl max-h-[90vh] overflow-y-auto`}>
+            <div className="p-4 border-b-4 border-gray-700 flex justify-between items-center bg-gray-800">
+              <h2 className="text-xl font-bold flex items-center gap-2">
+                CHARACTER DETAILS
+              </h2>
+              <button onClick={() => setIsMobileDetailsOpen(false)} className="text-gray-400 hover:text-white">
+                <X className="w-6 h-6" />
+              </button>
             </div>
+            <div className="p-4">
+              <CharacterDetails 
+                char={selectedChar} 
+                theme={theme} 
+                onToggleAutomation={toggleAutomation}
+                onOpenSettings={() => setIsSettingsModalOpen(true)}
+              />
+            </div>
+          </div>
         </div>
       )}
 
       {/* Settings Modal */}
       {isSettingsModalOpen && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4 font-mono">
-            <div className={`${theme.modal} w-full max-w-2xl overflow-hidden shadow-2xl max-h-[90vh] overflow-y-auto`}>
-                {/* Header */}
-                <div className="p-4 border-b-4 border-gray-700 flex justify-between items-center bg-gray-800 sticky top-0 z-10">
-                    <h2 className="text-xl font-bold flex items-center gap-2">
-                        <Settings className="w-6 h-6" />
-                        SETTINGS
-                    </h2>
-                    <button onClick={() => setIsSettingsModalOpen(false)} className="text-gray-400 hover:text-white">
-                        <X className="w-6 h-6" />
-                    </button>
-                </div>
-
-                <div className="p-6 space-y-8">
-                    {/* Profile Group */}
-                    <section className="space-y-4">
-                        <h3 className="text-lg font-bold text-green-400 border-b border-gray-700 pb-2">OPERATOR PROFILES</h3>
-                        <div className="grid gap-4 p-4 bg-black/20 rounded-lg">
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                <div>
-                                    <label className="block text-sm font-bold mb-1 text-gray-400">Profile Name</label>
-                                    <input 
-                                        type="text" 
-                                        placeholder="e.g. Main Team"
-                                        className={`${theme.input} w-full p-2`}
-                                        value={newProfile.name}
-                                        onChange={(e) => setNewProfile({...newProfile, name: e.target.value})}
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-bold mb-1 text-gray-400">Wallet Address</label>
-                                    <input 
-                                        type="text" 
-                                        placeholder="0x..."
-                                        className={`${theme.input} w-full p-2`}
-                                        value={newProfile.address}
-                                        onChange={(e) => setNewProfile({...newProfile, address: e.target.value})}
-                                    />
-                                </div>
-                            </div>
-                            <div>
-                                <label className="block text-sm font-bold mb-1 text-gray-400">Private Key (Encrypted)</label>
-                                <div className="flex gap-2">
-                                    <input 
-                                        type="password" 
-                                        placeholder="0x... (stored securely)"
-                                        className={`${theme.input} flex-1 p-2`}
-                                        value={newProfile.privateKey}
-                                        onChange={(e) => setNewProfile({...newProfile, privateKey: e.target.value})}
-                                    />
-                                    <button 
-                                        onClick={handleSaveProfile}
-                                        className="bg-green-600 hover:bg-green-500 text-white px-4 py-2 rounded font-bold flex items-center gap-2"
-                                    >
-                                        <Plus className="w-4 h-4" />
-                                        ADD
-                                    </button>
-                                </div>
-                            </div>
-                            
-                            {/* List existing profiles */}
-                            <div className="mt-2 space-y-2">
-                                {profiles.filter(p => p.id !== 'default').map(p => (
-                                    <div key={p.id} className="flex justify-between items-center bg-gray-800 p-2 rounded border border-gray-700">
-                                        <span className="font-bold">{p.name}</span>
-                                        <span className="text-xs text-gray-500 font-mono">{p.account_id}</span>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    </section>
-
-                    {/* Telegram Group */}
-                    <section className="space-y-4">
-                        <h3 className="text-lg font-bold text-blue-400 border-b border-gray-700 pb-2">NOTIFICATIONS</h3>
-                        <div className="grid gap-4 p-4 bg-black/20 rounded-lg">
-                            <div>
-                                <label className="block text-sm font-bold mb-1 text-gray-400">Telegram Bot Token</label>
-                                <input 
-                                    type="password" 
-                                    placeholder="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
-                                    className={`${theme.input} w-full p-2`}
-                                    value={telegramConfig.botToken}
-                                    onChange={(e) => setTelegramConfig({...telegramConfig, botToken: e.target.value})}
-                                />
-                            </div>
-                            <div>
-                                <label className="block text-sm font-bold mb-1 text-gray-400">Chat ID</label>
-                                <div className="flex gap-2">
-                                    <input 
-                                        type="text" 
-                                        placeholder="123456789"
-                                        className={`${theme.input} flex-1 p-2`}
-                                        value={telegramConfig.chatId}
-                                        onChange={(e) => setTelegramConfig({...telegramConfig, chatId: e.target.value})}
-                                    />
-                                    <button 
-                                        onClick={handleTestTelegram}
-                                        className="bg-gray-600 hover:bg-gray-500 text-white px-4 py-2 rounded font-bold flex items-center gap-2"
-                                        title="Send Test Message"
-                                    >
-                                        <Send className="w-4 h-4" />
-                                        TEST
-                                    </button>
-                                    <button 
-                                        onClick={handleSaveTelegram}
-                                        className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded font-bold"
-                                    >
-                                        SAVE
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    </section>
-
-                    {/* Appearance Group */}
-                    <section className="space-y-4">
-                        <h3 className="text-lg font-bold text-purple-400 border-b border-gray-700 pb-2">APPEARANCE</h3>
-                        <div className="grid gap-6 p-4 bg-black/20 rounded-lg">
-                            {/* Theme Selector */}
-                            <div>
-                                <label className="block text-sm font-bold mb-2 text-gray-400">Theme</label>
-                                <div className="flex flex-wrap gap-2">
-                                    {(Object.keys(THEMES) as Array<keyof typeof THEMES>).map((t) => (
-                                        <button
-                                            key={t}
-                                            onClick={() => handleThemeChange(t)}
-                                            className={`px-4 py-2 rounded capitalize font-bold border-2 ${currentTheme === t ? 'border-purple-500 bg-purple-500/20 text-purple-300' : 'border-gray-600 text-gray-400 hover:border-gray-400'}`}
-                                        >
-                                            {t}
-                                        </button>
-                                    ))}
-                                </div>
-                            </div>
-
-                            {/* Background Selector */}
-                            <div>
-                                <label className="block text-sm font-bold mb-2 text-gray-400">Background Image (Frosted Theme)</label>
-                                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-48 overflow-y-auto p-2 bg-black/40 rounded">
-                                    {backgroundList.map((bg) => (
-                                        <button
-                                            key={bg.id}
-                                            onClick={() => handleBackgroundChange(bg.url)}
-                                            className={`relative aspect-video rounded overflow-hidden border-2 transition-all ${currentBackground === bg.url ? 'border-green-500 ring-2 ring-green-500/50' : 'border-transparent hover:border-gray-400'}`}
-                                        >
-                                            <img src={bg.url} alt={bg.name} className="w-full h-full object-cover" />
-                                            <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-[0.6rem] text-white p-1 truncate">
-                                                {bg.name}
-                                            </div>
-                                        </button>
-                                    ))}
-                                </div>
-                            </div>
-                        </div>
-                    </section>
-
-                    {/* Account Group */}
-                    <section className="space-y-4">
-                        <h3 className="text-lg font-bold text-red-400 border-b border-gray-700 pb-2">ACCOUNT</h3>
-                        <div className="grid gap-4 p-4 bg-black/20 rounded-lg">
-                            <button 
-                                onClick={logout}
-                                className="w-full bg-red-600 hover:bg-red-500 text-white px-6 py-3 rounded font-bold flex items-center justify-center gap-2 shadow-lg transition-transform active:scale-95"
-                            >
-                                <LogOut className="w-5 h-5" />
-                                LOGOUT
-                            </button>
-                        </div>
-                    </section>
-                </div>
+          <div className={`${theme.modal} w-full max-w-2xl overflow-hidden shadow-2xl max-h-[90vh] overflow-y-auto`}>
+            {/* Header */}
+            <div className="p-4 border-b-4 border-gray-700 flex justify-between items-center bg-gray-800 sticky top-0 z-10">
+              <h2 className="text-xl font-bold flex items-center gap-2">
+                <Settings className="w-6 h-6" />
+                SETTINGS
+              </h2>
+              <button onClick={() => setIsSettingsModalOpen(false)} className="text-gray-400 hover:text-white">
+                <X className="w-6 h-6" />
+              </button>
             </div>
+
+            <div className="p-6 space-y-8">
+              {/* Profile Group */}
+              <section className="space-y-4">
+                <h3 className="text-lg font-bold text-green-400 border-b border-gray-700 pb-2">OPERATOR PROFILES</h3>
+                <div className="grid gap-4 p-4 bg-black/20 rounded-lg">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-bold mb-1 text-gray-400">Profile Name</label>
+                      <input 
+                        type="text" 
+                        placeholder="e.g. Main Team"
+                        className={`${theme.input} w-full p-2`}
+                        value={newProfile.name}
+                        onChange={(e) => setNewProfile({...newProfile, name: e.target.value})}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-bold mb-1 text-gray-400">Wallet Address</label>
+                      <input 
+                        type="text" 
+                        placeholder="0x..."
+                        className={`${theme.input} w-full p-2`}
+                        value={newProfile.address}
+                        onChange={(e) => setNewProfile({...newProfile, address: e.target.value})}
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-bold mb-1 text-gray-400">Private Key (Encrypted)</label>
+                    <div className="flex gap-2">
+                      <input 
+                        type="password" 
+                        placeholder="0x... (stored securely)"
+                        className={`${theme.input} flex-1 p-2`}
+                        value={newProfile.privateKey}
+                        onChange={(e) => setNewProfile({...newProfile, privateKey: e.target.value})}
+                      />
+                      <button 
+                        onClick={handleSaveProfile}
+                        className="bg-green-600 hover:bg-green-500 text-white px-4 py-2 rounded font-bold flex items-center gap-2"
+                      >
+                        <Plus className="w-4 h-4" />
+                        ADD
+                      </button>
+                    </div>
+                  </div>
+                  
+                  {/* List existing profiles */}
+                  <div className="mt-2 space-y-2">
+                    {profiles.filter(p => p.id !== 'default').map(p => (
+                      <div key={p.id} className="flex justify-between items-center bg-gray-800 p-2 rounded border border-gray-700">
+                        <span className="font-bold">{p.name}</span>
+                        <span className="text-xs text-gray-500 font-mono">{p.account_id}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </section>
+
+              {/* Telegram Group */}
+              <section className="space-y-4">
+                <h3 className="text-lg font-bold text-blue-400 border-b border-gray-700 pb-2">NOTIFICATIONS</h3>
+                <div className="grid gap-4 p-4 bg-black/20 rounded-lg">
+                  <div>
+                    <label className="block text-sm font-bold mb-1 text-gray-400">Telegram Bot Token</label>
+                    <input 
+                      type="password" 
+                      placeholder="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
+                      className={`${theme.input} w-full p-2`}
+                      value={telegramConfig.botToken}
+                      onChange={(e) => setTelegramConfig({...telegramConfig, botToken: e.target.value})}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-bold mb-1 text-gray-400">Chat ID</label>
+                    <div className="flex gap-2">
+                      <input 
+                        type="text" 
+                        placeholder="123456789"
+                        className={`${theme.input} flex-1 p-2`}
+                        value={telegramConfig.chatId}
+                        onChange={(e) => setTelegramConfig({...telegramConfig, chatId: e.target.value})}
+                      />
+                      <button 
+                        onClick={handleTestTelegram}
+                        className="bg-gray-600 hover:bg-gray-500 text-white px-4 py-2 rounded font-bold flex items-center gap-2"
+                        title="Send Test Message"
+                      >
+                        <Send className="w-4 h-4" />
+                        TEST
+                      </button>
+                      <button 
+                        onClick={handleSaveTelegram}
+                        className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded font-bold"
+                      >
+                        SAVE
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              {/* Appearance Group */}
+              <section className="space-y-4">
+                <h3 className="text-lg font-bold text-purple-400 border-b border-gray-700 pb-2">APPEARANCE</h3>
+                <div className="grid gap-6 p-4 bg-black/20 rounded-lg">
+                  {/* Theme Selector */}
+                  <div>
+                    <label className="block text-sm font-bold mb-2 text-gray-400">Theme</label>
+                    <div className="flex flex-wrap gap-2">
+                      {(Object.keys(THEMES) as Array<keyof typeof THEMES>).map((t) => (
+                        <button
+                          key={t}
+                          onClick={() => handleThemeChange(t)}
+                          className={`px-4 py-2 rounded capitalize font-bold border-2 ${currentTheme === t ? 'border-purple-500 bg-purple-500/20 text-purple-300' : 'border-gray-600 text-gray-400 hover:border-gray-400'}`}
+                        >
+                          {t}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Background Selector */}
+                  <div>
+                    <label className="block text-sm font-bold mb-2 text-gray-400">Background Image (Frosted Theme)</label>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-48 overflow-y-auto p-2 bg-black/40 rounded">
+                      {backgroundList.map((bg) => (
+                        <button
+                          key={bg.id}
+                          onClick={() => handleBackgroundChange(bg.url)}
+                          className={`relative aspect-video rounded overflow-hidden border-2 transition-all ${currentBackground === bg.url ? 'border-green-500 ring-2 ring-green-500/50' : 'border-transparent hover:border-gray-400'}`}
+                        >
+                          <img src={bg.url} alt={bg.name} className="w-full h-full object-cover" />
+                          <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-[0.6rem] text-white p-1 truncate">
+                            {bg.name}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              {/* Account Group */}
+              <section className="space-y-4">
+                <h3 className="text-lg font-bold text-red-400 border-b border-gray-700 pb-2">ACCOUNT</h3>
+                <div className="grid gap-4 p-4 bg-black/20 rounded-lg">
+                  <div className="text-xs font-mono text-gray-500 break-all bg-black/20 p-2 rounded">
+                    <div className="font-bold text-gray-400 mb-1">USER DID:</div>
+                    {user?.id || 'Unknown'}
+                  </div>
+                  <button 
+                    onClick={logout}
+                    className="w-full bg-red-600 hover:bg-red-500 text-white px-6 py-3 rounded font-bold flex items-center justify-center gap-2 shadow-lg transition-transform active:scale-95"
+                  >
+                    <LogOut className="w-5 h-5" />
+                    LOGOUT
+                  </button>
+                </div>
+              </section>
+            </div>
+          </div>
         </div>
       )}
 
       {/* Config Modal */}
       {isConfigModalOpen && configKami && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4 font-mono">
-            <div className={`${theme.modal} w-full max-w-md text-white overflow-hidden shadow-2xl`}>
-                {/* Header */}
-                <div className="bg-gray-800 p-4 border-b-4 border-gray-700 flex justify-between items-start">
-                    <div>
-                        <h2 className="text-xl font-bold text-yellow-400">{configKami.name}</h2>
-                        <div className="text-sm text-gray-400 mt-1">
-                            Level {configKami.level} • Room {configKami.room.index}
-                        </div>
-                    </div>
-                    <button onClick={() => setIsConfigModalOpen(false)} className="text-gray-400 hover:text-white">
-                        <X className="w-6 h-6" />
-                    </button>
+          <div className={`${theme.modal} w-full max-w-md text-white overflow-hidden shadow-2xl`}>
+            {/* Header */}
+            <div className="bg-gray-800 p-4 border-b-4 border-gray-700 flex justify-between items-start">
+              <div>
+                <h2 className="text-xl font-bold text-yellow-400">{configKami.name}</h2>
+                <div className="text-sm text-gray-400 mt-1">
+                  Level {configKami.level} • Room {configKami.room.index}
                 </div>
-
-                {/* Body */}
-                <div className="p-6 space-y-6">
-                    {/* Node Selection */}
-                    <div>
-                        <label className="block text-sm font-bold text-green-400 mb-2 uppercase">Harvest Node</label>
-                        <div className="mb-2 text-xs text-gray-400">
-                            Current: #{configKami.room.index} - {NODE_LIST.find(n => n.id === configKami.room.index)?.name || 'Unknown'}
-                        </div>
-                        <select 
-                            className="w-full bg-gray-800 border-2 border-gray-600 rounded p-2 text-white focus:border-green-500 outline-none"
-                            defaultValue={configKami.automation?.harvestNodeIndex || configKami.room.index || 0}
-                            onChange={(e) => setConfigKami({
-                                ...configKami,
-                                automation: { ...configKami.automation, harvestNodeIndex: parseInt(e.target.value) }
-                            })}
-                        >
-                            {NODE_LIST.map(node => (
-                                <option key={node.id} value={node.id}>
-                                    #{node.id} - {node.name} ({node.affinity})
-                                </option>
-                            ))}
-                        </select>
-                        <div className="text-xs text-gray-500 mt-1">Select target node for harvesting</div>
-                    </div>
-
-                    {/* Durations */}
-                    <div className="grid grid-cols-2 gap-4">
-                        <div>
-                            <label className="block text-sm font-bold text-blue-400 mb-2 uppercase">Harvest Duration</label>
-                            <input 
-                                type="number" 
-                                className="w-full bg-gray-800 border-2 border-gray-600 rounded p-2 text-white focus:border-blue-500 outline-none"
-                                defaultValue={configKami.automation?.harvestDuration || 60}
-                                onChange={(e) => setConfigKami({
-                                    ...configKami,
-                                    automation: { ...configKami.automation, harvestDuration: parseInt(e.target.value) }
-                                })}
-                            />
-                            <div className="text-xs text-gray-500 mt-1">(MINS)</div>
-                        </div>
-                        <div>
-                            <label className="block text-sm font-bold text-purple-400 mb-2 uppercase">Rest Duration</label>
-                            <input 
-                                type="number" 
-                                className="w-full bg-gray-800 border-2 border-gray-600 rounded p-2 text-white focus:border-purple-500 outline-none"
-                                defaultValue={configKami.automation?.restDuration || 30}
-                                onChange={(e) => setConfigKami({
-                                    ...configKami,
-                                    automation: { ...configKami.automation, restDuration: parseInt(e.target.value) }
-                                })}
-                            />
-                            <div className="text-xs text-gray-500 mt-1">(MINS)</div>
-                        </div>
-                    </div>
-
-                    {/* Toggles */}
-                    <div className="space-y-3 pt-2">
-                        <label className="flex items-center gap-3 cursor-pointer group">
-                            <div className="relative">
-                                <input 
-                                    type="checkbox" 
-                                    className="peer sr-only"
-                                    checked={configKami.automation?.autoCollectEnabled || false}
-                                    onChange={(e) => setConfigKami({
-                                        ...configKami,
-                                        automation: { ...configKami.automation, autoCollectEnabled: e.target.checked }
-                                    })}
-                                />
-                                <div className="w-10 h-6 bg-gray-700 rounded-full border-2 border-gray-600 peer-checked:bg-green-500 peer-checked:border-green-400 transition-all"></div>
-                                <div className="absolute left-1 top-1 w-4 h-4 bg-white rounded-full transition-all peer-checked:translate-x-4"></div>
-                            </div>
-                            <div>
-                                <span className="block font-bold text-white group-hover:text-green-400 transition-colors">Auto-collect</span>
-                                <span className="text-xs text-gray-500">Stop harvest when timer ends</span>
-                            </div>
-                        </label>
-
-                        <label className="flex items-center gap-3 cursor-pointer group">
-                            <div className="relative">
-                                <input 
-                                    type="checkbox" 
-                                    className="peer sr-only"
-                                    checked={configKami.automation?.autoRestartEnabled || false}
-                                    onChange={(e) => setConfigKami({
-                                        ...configKami,
-                                        automation: { ...configKami.automation, autoRestartEnabled: e.target.checked }
-                                    })}
-                                />
-                                <div className="w-10 h-6 bg-gray-700 rounded-full border-2 border-gray-600 peer-checked:bg-blue-500 peer-checked:border-blue-400 transition-all"></div>
-                                <div className="absolute left-1 top-1 w-4 h-4 bg-white rounded-full transition-all peer-checked:translate-x-4"></div>
-                            </div>
-                            <div>
-                                <span className="block font-bold text-white group-hover:text-blue-400 transition-colors">Auto-restart</span>
-                                <span className="text-xs text-gray-500">Start harvest when rest ends</span>
-                            </div>
-                        </label>
-                    </div>
-                </div>
-
-                {/* Footer */}
-                <div className="bg-gray-800 p-4 border-t-4 border-gray-700 flex justify-end gap-3">
-                    <button 
-                        onClick={() => setIsConfigModalOpen(false)}
-                        className="px-4 py-2 text-gray-400 hover:text-white font-bold"
-                    >
-                        CANCEL
-                    </button>
-                    <button 
-                        onClick={() => handleSaveConfig(configKami.automation)}
-                        className="bg-green-500 hover:bg-green-600 text-white px-6 py-2 rounded font-bold flex items-center gap-2 shadow-lg shadow-green-500/20"
-                    >
-                        <Save className="w-4 h-4" />
-                        SAVE CONFIG
-                    </button>
-                </div>
+              </div>
+              <button onClick={() => setIsConfigModalOpen(false)} className="text-gray-400 hover:text-white">
+                <X className="w-6 h-6" />
+              </button>
             </div>
+
+            {/* Body */}
+            <div className="p-6 space-y-6">
+              {/* Node Selection */}
+              <div>
+                <label className="block text-sm font-bold text-green-400 mb-2 uppercase">Harvest Node</label>
+                <div className="mb-2 text-xs text-gray-400">
+                  Current: #{configKami.room.index} - {NODE_LIST.find(n => n.id === configKami.room.index)?.name || 'Unknown'}
+                </div>
+                <select 
+                  className="w-full bg-gray-800 border-2 border-gray-600 rounded p-2 text-white focus:border-green-500 outline-none"
+                  defaultValue={configKami.automation?.harvestNodeIndex || configKami.room.index || 0}
+                  onChange={(e) => setConfigKami({
+                    ...configKami,
+                    automation: { ...configKami.automation, harvestNodeIndex: parseInt(e.target.value) }
+                  })}
+                >
+                  {NODE_LIST.map(node => (
+                    <option key={node.id} value={node.id}>
+                      #{node.id} - {node.name} ({node.affinity})
+                    </option>
+                  ))}
+                </select>
+                <div className="text-xs text-gray-500 mt-1">Select target node for harvesting</div>
+              </div>
+
+              {/* Durations */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-bold text-blue-400 mb-2 uppercase">Harvest Duration</label>
+                  <input 
+                    type="number" 
+                    className="w-full bg-gray-800 border-2 border-gray-600 rounded p-2 text-white focus:border-blue-500 outline-none"
+                    defaultValue={configKami.automation?.harvestDuration || 60}
+                    onChange={(e) => setConfigKami({
+                      ...configKami,
+                      automation: { ...configKami.automation, harvestDuration: parseInt(e.target.value) }
+                    })}
+                  />
+                  <div className="text-xs text-gray-500 mt-1">(MINS)</div>
+                </div>
+                <div>
+                  <label className="block text-sm font-bold text-purple-400 mb-2 uppercase">Rest Duration</label>
+                  <input 
+                    type="number" 
+                    className="w-full bg-gray-800 border-2 border-gray-600 rounded p-2 text-white focus:border-purple-500 outline-none"
+                    defaultValue={configKami.automation?.restDuration || 30}
+                    onChange={(e) => setConfigKami({
+                      ...configKami,
+                      automation: { ...configKami.automation, restDuration: parseInt(e.target.value) }
+                    })}
+                  />
+                  <div className="text-xs text-gray-500 mt-1">(MINS)</div>
+                </div>
+              </div>
+
+              {/* Toggles */}
+              <div className="space-y-3 pt-2">
+                <label className="flex items-center gap-3 cursor-pointer group">
+                  <div className="relative">
+                    <input 
+                      type="checkbox" 
+                      className="peer sr-only"
+                      checked={configKami.automation?.autoCollectEnabled || false}
+                      onChange={(e) => setConfigKami({
+                        ...configKami,
+                        automation: { ...configKami.automation, autoCollectEnabled: e.target.checked }
+                      })}
+                    />
+                    <div className="w-10 h-6 bg-gray-700 rounded-full border-2 border-gray-600 peer-checked:bg-green-500 peer-checked:border-green-400 transition-all"></div>
+                    <div className="absolute left-1 top-1 w-4 h-4 bg-white rounded-full transition-all peer-checked:translate-x-4"></div>
+                  </div>
+                  <div>
+                    <span className="block font-bold text-white group-hover:text-green-400 transition-colors">Auto-collect</span>
+                    <span className="text-xs text-gray-500">Stop harvest when timer ends</span>
+                  </div>
+                </label>
+
+                <label className="flex items-center gap-3 cursor-pointer group">
+                  <div className="relative">
+                    <input 
+                      type="checkbox" 
+                      className="peer sr-only"
+                      checked={configKami.automation?.autoRestartEnabled || false}
+                      onChange={(e) => setConfigKami({
+                        ...configKami,
+                        automation: { ...configKami.automation, autoRestartEnabled: e.target.checked }
+                      })}
+                    />
+                    <div className="w-10 h-6 bg-gray-700 rounded-full border-2 border-gray-600 peer-checked:bg-blue-500 peer-checked:border-blue-400 transition-all"></div>
+                    <div className="absolute left-1 top-1 w-4 h-4 bg-white rounded-full transition-all peer-checked:translate-x-4"></div>
+                  </div>
+                  <div>
+                    <span className="block font-bold text-white group-hover:text-blue-400 transition-colors">Auto-restart</span>
+                    <span className="text-xs text-gray-500">Start harvest when rest ends</span>
+                  </div>
+                </label>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="bg-gray-800 p-4 border-t-4 border-gray-700 flex justify-end gap-3">
+              <button 
+                onClick={() => setIsConfigModalOpen(false)}
+                className="px-4 py-2 text-gray-400 hover:text-white font-bold"
+              >
+                CANCEL
+              </button>
+              <button 
+                onClick={() => handleSaveConfig(configKami.automation)}
+                className="bg-green-500 hover:bg-green-600 text-white px-6 py-2 rounded font-bold flex items-center gap-2 shadow-lg shadow-green-500/20"
+              >
+                <Save className="w-4 h-4" />
+                SAVE CONFIG
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

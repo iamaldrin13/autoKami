@@ -1,19 +1,13 @@
 import { ethers } from 'ethers';
-import { readFileSync } from 'fs';
-import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
+import { loadAbi } from '../utils/contractLoader.js';
 import { getNodeName, getTraitData, getLevelData } from '../utils/mappings.js';
 import { getKamiSkills, KamiSkills, SkillData } from './skillService.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-// Load ABI
-const abiPath = join(__dirname, '../../../abi/GetterSystem.json');
-const GetterSystemABI = JSON.parse(readFileSync(abiPath, 'utf-8'));
+// Load ABI using robust loader
+const GetterSystemABI = loadAbi('GetterSystem.json');
 
 const GETTER_SYSTEM_ADDRESS = '0x12C0989A259471D89D1bA1BB95043D64DAF97c19';
-const RPC_URL = 'https://archival-jsonrpc-yominet-1.anvil.asia-southeast.initia.xyz';
+const RPC_URL = process.env.RPC_URL || 'https://archival-jsonrpc-yominet-1.anvil.asia-southeast.initia.xyz';
 
 // Initialize provider
 const provider = new ethers.JsonRpcProvider(RPC_URL);
