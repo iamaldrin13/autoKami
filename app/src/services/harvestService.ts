@@ -1,8 +1,8 @@
 import { ethers } from 'ethers';
 import { loadAbi, loadIds } from '../utils/contractLoader.js';
+import { getSystemAddress } from './transactionService.js';
 
 // Load ABIs and Config dynamically
-const World = loadAbi('World.json');
 const HarvestStartSystem = loadAbi('HarvestStartSystem.json');
 const HarvestStopSystem = loadAbi('HarvestStopSystem.json');
 const HarvestCollectSystem = loadAbi('HarvestCollectSystem.json');
@@ -11,14 +11,10 @@ const SYSTEMS = loadIds('systems.json');
 const COMPONENTS = loadIds('components.json');
 
 const RPC_URL = process.env.RPC_URL || 'https://archival-jsonrpc-yominet-1.anvil.asia-southeast.initia.xyz';
-const WORLD_ADDRESS = process.env.WORLD_ADDRESS || '0x2729174c265dbBd8416C6449E0E813E88f43D0E7';
 const GETTER_SYSTEM_ADDRESS = process.env.GETTER_SYSTEM_ADDRESS || '0x12C0989A259471D89D1bA1BB95043D64DAF97c19';
 
 // Initialize provider
 const provider = new ethers.JsonRpcProvider(RPC_URL);
-
-// Create World contract instance
-const world = new ethers.Contract(WORLD_ADDRESS, World.abi, provider);
 
 export interface HarvestParams {
   kamiId: string;
@@ -36,13 +32,6 @@ export interface HarvestResult {
   txHash?: string;
   harvestId?: string;
   error?: string;
-}
-
-// Helper to get system address
-async function getSystemAddress(systemId: string): Promise<string> {
-  // Implementation reusing transactionService logic or simpler lookup if ID is known
-  const { getSystemAddress } = await import('./transactionService.js');
-  return getSystemAddress(systemId);
 }
 
 export async function startHarvest(params: HarvestParams): Promise<HarvestResult> {

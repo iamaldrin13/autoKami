@@ -1,12 +1,12 @@
 import { ethers } from 'ethers';
 import { loadAbi, loadIds } from '../utils/contractLoader.js';
+import { getSystemAddress } from './transactionService.js';
 
 // Load ABIs and Config dynamically
 const CraftSystem = loadAbi('CraftSystem.json');
 const SYSTEMS = loadIds('systems.json');
 
 const RPC_URL = process.env.RPC_URL || 'https://archival-jsonrpc-yominet-1.anvil.asia-southeast.initia.xyz';
-const WORLD_ADDRESS = process.env.WORLD_ADDRESS || '0x2729174c265dbBd8416C6449E0E813E88f43D0E7';
 
 // Initialize provider
 const provider = new ethers.JsonRpcProvider(RPC_URL);
@@ -17,19 +17,6 @@ export interface CraftResult {
   error?: string;
 }
 
-// Helper to get system address (reused pattern)
-async function getSystemAddress(systemIdEncoded: string): Promise<string> {
-  const world = new ethers.Contract(WORLD_ADDRESS, loadAbi('World.json').abi, provider);
-  const registryAddr = await world.systems();
-  const IDOwnsKamiComponent = loadAbi('IDOwnsKamiComponent.json');
-  const registry = new ethers.Contract(registryAddr, IDOwnsKamiComponent.abi, provider);
-  const addresses = await registry.getFunction('getEntitiesWithValue(bytes)')(systemIdEncoded);
-  if (addresses.length > 0) {
-    return ethers.getAddress('0x' + BigInt(addresses[0]).toString(16).padStart(40, '0'));
-  }
-  throw new Error('System not found');
-}
-
 export async function craftRecipe(
   recipeIndex: number, 
   amount: number, 
@@ -38,6 +25,7 @@ export async function craftRecipe(
   try {
     const wallet = new ethers.Wallet(privateKey, provider);
     
+    // Use encodedID (0x...) which getSystemAddress handles
     const systemId = SYSTEMS.CraftSystem.encodedID;
     const systemAddress = await getSystemAddress(systemId);
     

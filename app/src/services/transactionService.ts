@@ -4,7 +4,7 @@ import { loadAbi, loadIds } from '../utils/contractLoader.js';
 const World = loadAbi('World.json');
 const systems = loadIds('systems.json');
 
-const WORLD_ADDRESS = '0x2729174c265dbBd8416C6449E0E813E88f43D0E7';
+const WORLD_ADDRESS = process.env.WORLD_ADDRESS || '0x2729174c265dbBd8416C6449E0E813E88f43D0E7';
 const RPC_URL = process.env.RPC_URL || 'https://archival-jsonrpc-yominet-1.anvil.asia-southeast.initia.xyz';
 
 // Initialize provider
@@ -24,6 +24,7 @@ export interface ExecuteSystemCallParams {
  * Get system address from World contract
  */
 export async function getSystemAddress(systemId: string): Promise<string> {
+  console.log(`[Transaction] Resolving address for system: ${systemId}`);
   let encodedId: string;
   if (systemId.startsWith('0x')) {
     encodedId = systemId;
@@ -32,6 +33,7 @@ export async function getSystemAddress(systemId: string): Promise<string> {
       key => (systems as any)[key].id === systemId
     );
     if (!systemKey) {
+      console.error(`[Transaction] System ID not found in mapping: ${systemId}`);
       throw new Error(`System ID not found: ${systemId}`);
     }
     encodedId = (systems as any)[systemKey].encodedID;
@@ -49,11 +51,14 @@ export async function getSystemAddress(systemId: string): Promise<string> {
   const systemAddresses = await systemsRegistry.getFunction('getEntitiesWithValue(bytes)')(encodedId);
   
   if (systemAddresses.length === 0) {
+    console.error(`[Transaction] System address lookup failed for encoded ID: ${encodedId}`);
     throw new Error(`System address not found for: ${systemId}`);
   }
 
   const entityId = BigInt(systemAddresses[0].toString());
-  return ethers.getAddress('0x' + entityId.toString(16).padStart(40, '0'));
+  const address = ethers.getAddress('0x' + entityId.toString(16).padStart(40, '0'));
+  console.log(`[Transaction] Resolved ${systemId} to ${address}`);
+  return address;
 }
 
 function loadSystemABI(systemId: string): any {
@@ -93,6 +98,7 @@ function loadSystemABI(systemId: string): any {
 
 export async function executeSystemCall(params: ExecuteSystemCallParams): Promise<ethers.ContractTransactionResponse> {
   const { systemId, arguments: args, typedParams, privateKey } = params;
+  console.log(`[Transaction] Executing system call: ${systemId}`);
 
   const wallet = new ethers.Wallet(privateKey, provider);
   const systemAddress = await getSystemAddress(systemId);
@@ -101,11 +107,13 @@ export async function executeSystemCall(params: ExecuteSystemCallParams): Promis
 
   if (typedParams && typedParams.length > 0) {
     if (systemABI.abi.some((fn: any) => fn.name === 'executeTyped')) {
+      console.log(`[Transaction] Calling executeTyped for ${systemId}`);
       return await system.executeTyped(...typedParams, { gasLimit: 2000000 });
     }
   }
 
   if (args && args.length > 0) {
+    console.log(`[Transaction] Calling execute(bytes) for ${systemId}`);
     const encodedArgs = ethers.AbiCoder.defaultAbiCoder().encode(
       ['uint256'],
       [args[0]] 
@@ -114,6 +122,7 @@ export async function executeSystemCall(params: ExecuteSystemCallParams): Promis
   }
 
   if (systemABI.abi.some((fn: any) => fn.name === 'executeTyped')) {
+    console.log(`[Transaction] Calling executeTyped (no args) for ${systemId}`);
     return await system.executeTyped({ gasLimit: 2000000 });
   }
 

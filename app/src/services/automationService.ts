@@ -82,7 +82,7 @@ export async function processCraftingAutomation() {
                     
                     let privateKey;
                     try {
-                        privateKey = decryptPrivateKey(wallet.encrypted_private_key);
+                        privateKey = await decryptPrivateKey(wallet.encrypted_private_key);
                     } catch (e) {
                         console.error(`[Crafting] Decryption failed for ${wallet.name}`);
                         continue;
@@ -189,7 +189,7 @@ async function processAutomation() {
                             message: `Health critically low (${currentHealth} / ${minHealth}). Emergency stop triggered (Node #${profile.harvest_node_index ?? '?'}).`
                         });
 
-                        const privateKey = decryptPrivateKey(kami.encrypted_private_key);
+                        const privateKey = await decryptPrivateKey(kami.encrypted_private_key);
                         const result = await stopHarvestByKamiId(kamiId, privateKey);
 
                         if (result.success) {
@@ -231,7 +231,7 @@ async function processAutomation() {
                                 message: `Harvest duration (${profile.harvest_duration}m) exceeded. Stopping harvest (Node #${profile.harvest_node_index ?? '?'}).`
                             });
 
-                            const privateKey = decryptPrivateKey(kami.encrypted_private_key);
+                            const privateKey = await decryptPrivateKey(kami.encrypted_private_key);
                             const result = await stopHarvestByKamiId(kamiId, privateKey);
 
                             if (result.success) {
@@ -279,7 +279,7 @@ async function processAutomation() {
                                 message: `Rest duration (${profile.rest_duration}m) exceeded. Starting harvest.`
                             });
 
-                            const privateKey = decryptPrivateKey(kami.encrypted_private_key);
+                            const privateKey = await decryptPrivateKey(kami.encrypted_private_key);
                             // Use configured node or default to 0
                             const nodeIndex = profile.harvest_node_index || 0; 
                             

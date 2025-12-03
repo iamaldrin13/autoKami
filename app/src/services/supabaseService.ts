@@ -1,5 +1,6 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import crypto from 'crypto';
+import { promisify } from 'util';
 import dotenv from 'dotenv';
 import { telegram } from './telegram.js';
 
@@ -27,13 +28,15 @@ const SALT_LENGTH = 64;
 const TAG_LENGTH = 16;
 const KEY_LENGTH = 32;
 
-function deriveKey(password: string, salt: Buffer): Buffer {
-  return crypto.pbkdf2Sync(password, salt, 100000, KEY_LENGTH, 'sha512');
+const pbkdf2 = promisify(crypto.pbkdf2);
+
+async function deriveKey(password: string, salt: Buffer): Promise<Buffer> {
+  return (await pbkdf2(password, salt, 100000, KEY_LENGTH, 'sha512')) as Buffer;
 }
 
-export function encryptPrivateKey(privateKey: string, password: string = ENCRYPTION_KEY): string {
+export async function encryptPrivateKey(privateKey: string, password: string = ENCRYPTION_KEY): Promise<string> {
   const salt = crypto.randomBytes(SALT_LENGTH);
-  const key = deriveKey(password, salt);
+  const key = await deriveKey(password, salt);
   const iv = crypto.randomBytes(IV_LENGTH);
   const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
 
@@ -46,7 +49,7 @@ export function encryptPrivateKey(privateKey: string, password: string = ENCRYPT
   return result.toString('base64');
 }
 
-export function decryptPrivateKey(encryptedData: string, password: string = ENCRYPTION_KEY): string {
+export async function decryptPrivateKey(encryptedData: string, password: string = ENCRYPTION_KEY): Promise<string> {
   const buffer = Buffer.from(encryptedData, 'base64');
 
   const salt = buffer.subarray(0, SALT_LENGTH);
@@ -54,7 +57,7 @@ export function decryptPrivateKey(encryptedData: string, password: string = ENCR
   const authTag = buffer.subarray(SALT_LENGTH + IV_LENGTH, SALT_LENGTH + IV_LENGTH + TAG_LENGTH);
   const encrypted = buffer.subarray(SALT_LENGTH + IV_LENGTH + TAG_LENGTH);
 
-  const key = deriveKey(password, salt);
+  const key = await deriveKey(password, salt);
   const decipher = crypto.createDecipheriv(ALGORITHM, key, iv);
   decipher.setAuthTag(authTag);
 
@@ -150,7 +153,7 @@ export async function addOperatorWallet(
   walletAddress: string,
   privateKey: string
 ): Promise<OperatorWallet> {
-  const encryptedKey = encryptPrivateKey(privateKey);
+  const encryptedKey = await encryptPrivateKey(privateKey);
 
   const { data, error } = await supabase
     .from('operator_wallets')
@@ -191,6 +194,47 @@ export async function deleteOperatorWallet(walletId: string): Promise<void> {
 }
 
 // Kamigotchi operations
+export interface KamiStat {
+  base: number;
+  shift: number;
+  boost: number;
+  sync: number;
+}
+
+export interface KamiStats {
+  health: KamiStat;
+  power: KamiStat;
+  harmony: KamiStat;
+  violence: KamiStat;
+}
+
+export interface KamiTraits {
+  face: number | null;
+  hand: number | null;
+  body: number | null;
+  background: number | null;
+  color: number | null;
+}
+
+export interface FinalStats {
+  power: number;
+  health: number;
+  harmony: number;
+  violence: number;
+  fertilityMultiplier?: number;
+  bountyMultiplier?: number;
+  metabolismMultiplier?: number;
+  strainMultiplier?: number;
+  defenseShiftMultiplier?: number;
+  defenseRatioMultiplier?: number;
+  salvageRatioMultiplier?: number;
+  atkSpoilsRatioMultiplier?: number;
+  atkThresholdRatioMultiplier?: number;
+  atkThresholdShiftMultiplier?: number;
+  cooldownShift?: number;
+  intensityBoost?: number;
+}
+
 export interface Kamigotchi {
   id: string;
   user_id: string;
@@ -204,10 +248,10 @@ export interface Kamigotchi {
   room_name: string | null;
   media_uri: string | null;
   account_id: string;
-  affinities: any;
-  stats: any;
-  final_stats: any;
-  traits: any;
+  affinities: string[];
+  stats: KamiStats;
+  final_stats: FinalStats;
+  traits: KamiTraits;
   current_health?: number;
   encrypted_private_key: string;
   created_at: string;
@@ -227,14 +271,14 @@ export async function upsertKamigotchi(kamiData: {
   roomName: string | null;
   mediaUri: string | null;
   accountId: string;
-  affinities: any;
-  stats: any;
-  finalStats: any;
-  traits: any;
+  affinities: string[];
+  stats: KamiStats;
+  finalStats: FinalStats;
+  traits: KamiTraits;
   privateKey: string;
   currentHealth?: number; // Added optional currentHealth
 }): Promise<Kamigotchi> {
-  const encryptedKey = encryptPrivateKey(kamiData.privateKey);
+  const encryptedKey = await encryptPrivateKey(kamiData.privateKey);
 
   // Map final stats to columns
   const finalStats = kamiData.finalStats || {};

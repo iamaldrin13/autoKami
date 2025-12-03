@@ -20,7 +20,85 @@ import { processCraftingAutomation } from '../services/automationService.js';
 
 const router = Router();
 
-// ... (POST /refresh remains unchanged)
+/**
+ * POST /api/kamigotchis/refresh
+ * Refresh Kamigotchis from blockchain for a user
+ */
+router.post('/refresh', async (req: Request, res: Response) => {
+    try {
+        const { privyUserId, operatorWalletId } = req.body;
+
+        if (!privyUserId) {
+            return res.status(400).json({
+                error: 'Missing required field: privyUserId'
+            });
+        }
+
+        // Get or create user
+        const user = await getOrCreateUser(privyUserId);
+
+        // Get operator wallets
+        let wallets = await getOperatorWallets(user.id);
+        if (operatorWalletId) {
+            wallets = wallets.filter(w => w.id === operatorWalletId);
+        }
+
+        if (wallets.length === 0) {
+            return res.json({ success: true, synced: 0, message: 'No active profiles found' });
+        }
+
+        let syncedCount = 0;
+        const errors: string[] = [];
+
+        for (const wallet of wallets) {
+            try {
+                console.log(`[Refresh] Syncing wallet ${wallet.name} (${wallet.account_id})...`);
+                const kamis = await getKamisByAccountId(wallet.account_id);
+                console.log(`[Refresh] Found ${kamis.length} Kamis on-chain.`);
+
+                const privateKey = await decryptPrivateKey(wallet.encrypted_private_key);
+
+                for (const kami of kamis) {
+                    await upsertKamigotchi({
+                        userId: user.id,
+                        operatorWalletId: wallet.id,
+                        kamiEntityId: kami.id,
+                        kamiIndex: kami.index,
+                        kamiName: kami.name,
+                        level: kami.level,
+                        state: kami.state,
+                        roomIndex: kami.room.index,
+                        roomName: kami.room.name,
+                        mediaUri: kami.mediaURI,
+                        accountId: kami.account,
+                        affinities: kami.affinities,
+                        stats: kami.stats,
+                        finalStats: kami.finalStats,
+                        traits: kami.traits,
+                        privateKey: privateKey,
+                        currentHealth: kami.currentHealth
+                    });
+                    syncedCount++;
+                }
+            } catch (err: any) {
+                console.error(`[Refresh] Error syncing wallet ${wallet.id}:`, err);
+                errors.push(err.message);
+            }
+        }
+
+        return res.json({
+            success: true,
+            synced: syncedCount,
+            errors: errors.length > 0 ? errors : undefined
+        });
+
+    } catch (error) {
+        console.error('Refresh error:', error);
+        return res.status(500).json({
+            error: error instanceof Error ? error.message : 'Failed to refresh kamigotchis'
+        });
+    }
+});
 
 /**
  * GET /api/kamigotchis
@@ -246,7 +324,7 @@ router.post('/:id/harvest/start', async (req: Request, res: Response) => {
         }
 
         // Decrypt private key
-        const privateKey = decryptPrivateKey(kami.encrypted_private_key);
+        const privateKey = await decryptPrivateKey(kami.encrypted_private_key);
 
         // Start harvest
         const result = await startHarvest({
@@ -305,7 +383,7 @@ router.post('/:id/harvest/stop', async (req: Request, res: Response) => {
         }
 
         // Decrypt private key
-        const privateKey = decryptPrivateKey(kami.encrypted_private_key);
+        const privateKey = await decryptPrivateKey(kami.encrypted_private_key);
 
         // Stop harvest
         const result = await stopHarvestByKamiId(kami.kami_entity_id, privateKey);
