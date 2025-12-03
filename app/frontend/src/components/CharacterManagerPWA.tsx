@@ -405,13 +405,9 @@ const CharacterManagerPWA = () => {
       try {
         const currentProfile = profiles[currentProfileIndex];
         
-        const { kamigotchis } = await getKamigotchis(user.id);
+        const { kamigotchis } = await getKamigotchis(user.id, currentProfile.id);
         
         const mappedCharacters: Kami[] = kamigotchis
-          .filter((k: any) => {
-            if (currentProfile.id === 'default') return true;
-            return k.operator_wallet_id === currentProfile.id;
-          })
           .map((k: any) => ({
             id: k.id,
             kami_index: k.index,
@@ -561,17 +557,17 @@ const CharacterManagerPWA = () => {
         const profile = profiles.find(p => p.id === configKami.operator_wallet_id);
         const profileName = profile?.name || 'Unknown Profile';
         
-        let staminaMsg = '';
+        let staminaMsg = 'Unknown';
         if (profile?.account_id) {
             try {
                 const stamina = await getAccountStamina(profile.account_id);
-                staminaMsg = ` : ${stamina}`;
+                staminaMsg = stamina.toString();
             } catch (e) {
                 console.error('Failed to fetch stamina for log', e);
             }
         }
 
-        addLog(`${profileName}${staminaMsg}`, 'success');
+        addLog(`Auto craft settings updated for ${profileName}. Current Stamina: ${staminaMsg}`, 'success');
         
         setCharacters(chars => chars.map(c => 
           c.id === configKami.id ? { ...c, automation: { ...c.automation, ...settings } } : c

@@ -337,12 +337,18 @@ export async function upsertKamigotchi(kamiData: {
   return data;
 }
 
-export async function getKamigotchis(userId: string): Promise<Kamigotchi[]> {
-  const { data, error } = await supabase
+export async function getKamigotchis(userId: string, operatorWalletId?: string): Promise<Kamigotchi[]> {
+  let query = supabase
     .from('kamigotchis')
     .select('*')
     .eq('user_id', userId)
     .order('created_at', { ascending: false });
+
+  if (operatorWalletId && operatorWalletId !== 'default') {
+    query = query.eq('operator_wallet_id', operatorWalletId);
+  }
+
+  const { data, error } = await query;
 
   if (error) throw error;
   return data || [];

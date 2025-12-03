@@ -80,6 +80,14 @@ export async function processCraftingAutomation() {
                 if (stamina >= requiredStamina) {
                     console.log(`[Crafting] Wallet ${wallet.name}: Stamina ${stamina} >= ${requiredStamina}. Crafting...`);
                     
+                    await logSystemEvent({
+                        user_id: wallet.user_id,
+                        action: 'auto_craft_start',
+                        status: 'info',
+                        message: `Stamina check passed (${stamina} >= ${requiredStamina}). Starting auto-craft for ${recipe.name} (x${setting.amount_to_craft})...`,
+                        metadata: { stamina, required: requiredStamina, recipe: recipe.name }
+                    });
+
                     let privateKey;
                     try {
                         privateKey = await decryptPrivateKey(wallet.encrypted_private_key);

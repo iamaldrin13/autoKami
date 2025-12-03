@@ -213,8 +213,12 @@ export const refreshKamigotchis = async (privyUserId: string, operatorWalletId?:
   return response.data;
 };
 
-export const getKamigotchis = async (privyUserId: string): Promise<{ kamigotchis: KamigotchiData[] }> => {
-  const response = await api.get('/kamigotchis', { params: { privyUserId } });
+export const getKamigotchis = async (privyUserId: string, operatorWalletId?: string): Promise<{ kamigotchis: KamigotchiData[] }> => {
+  const params: any = { privyUserId };
+  if (operatorWalletId && operatorWalletId !== 'default') {
+    params.operatorWalletId = operatorWalletId;
+  }
+  const response = await api.get('/kamigotchis', { params });
   return response.data;
 };
 

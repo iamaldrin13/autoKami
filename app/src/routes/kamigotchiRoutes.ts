@@ -109,7 +109,7 @@ router.post('/refresh', async (req: Request, res: Response) => {
  */
 router.get('/', async (req: Request, res: Response) => {
     try {
-        const { privyUserId } = req.query;
+        const { privyUserId, operatorWalletId } = req.query;
 
         if (!privyUserId || typeof privyUserId !== 'string') {
             return res.status(400).json({
@@ -120,8 +120,8 @@ router.get('/', async (req: Request, res: Response) => {
         // Get user
         const user = await getOrCreateUser(privyUserId);
 
-        // Get kamigotchis
-        const kamigotchis = await getKamigotchis(user.id);
+        // Get kamigotchis (filtered by profile if provided)
+        const kamigotchis = await getKamigotchis(user.id, typeof operatorWalletId === 'string' ? operatorWalletId : undefined);
 
         // Get automation profiles for each kamigotchi
         const kamigotchisWithProfiles = await Promise.all(
@@ -132,13 +132,9 @@ router.get('/', async (req: Request, res: Response) => {
                     // Get crafting settings for the wallet
                     const crafting = await getAutoCraftingSettings(kami.operator_wallet_id);
 
-                    // Check on-chain harvesting status
-                    let isHarvesting = false;
-                    try {
-                        isHarvesting = await isKamiHarvesting(kami.kami_entity_id);
-                    } catch (error) {
-                        console.error(`Failed to check harvest status for ${kami.kami_entity_id}:`, error);
-                    }
+                    // Optimization: Use DB state instead of on-chain call for list view
+                    // The automation loop keeps profile.is_currently_harvesting updated
+                    const isHarvesting = profile.is_currently_harvesting;
 
                     return {
                         id: kami.id,
@@ -333,6 +329,9 @@ router.post('/:id/harvest/start', async (req: Request, res: Response) => {
             privateKey
         });
 
+        // Get profile for logging
+        const profile = await getOrCreateKamiProfile(kami.id, kami.operator_wallet_id);
+
         if (result.success) {
             // Update profile
             await updateKamiProfile(kami.id, {
@@ -341,12 +340,32 @@ router.post('/:id/harvest/start', async (req: Request, res: Response) => {
                 auto_harvest_enabled: true // Enable automation when started manually via UI
             });
 
+            await logSystemEvent({
+                user_id: kami.user_id,
+                kami_index: kami.kami_index,
+                kami_profile_id: profile.id,
+                action: 'manual_start_harvest',
+                status: 'success',
+                message: `Manual harvest started for Kami #${kami.kami_index} at Node #${harvestNodeIndex}.`,
+                metadata: { txHash: result.txHash, harvestId: result.harvestId }
+            });
+
             return res.json({
                 success: true,
                 txHash: result.txHash,
                 harvestId: result.harvestId
             });
         } else {
+            await logSystemEvent({
+                user_id: kami.user_id,
+                kami_index: kami.kami_index,
+                kami_profile_id: profile.id,
+                action: 'manual_start_harvest_fail',
+                status: 'error',
+                message: `Manual harvest start failed for Kami #${kami.kami_index}: ${result.error}`,
+                metadata: { error: result.error }
+            });
+
             return res.status(500).json({
                 success: false,
                 error: result.error
@@ -388,6 +407,9 @@ router.post('/:id/harvest/stop', async (req: Request, res: Response) => {
         // Stop harvest
         const result = await stopHarvestByKamiId(kami.kami_entity_id, privateKey);
 
+        // Get profile for logging
+        const profile = await getOrCreateKamiProfile(kami.id, kami.operator_wallet_id);
+
         if (result.success) {
             // Update profile
             await updateKamiProfile(kami.id, {
@@ -395,11 +417,31 @@ router.post('/:id/harvest/stop', async (req: Request, res: Response) => {
                 auto_harvest_enabled: false // Disable automation when stopped manually via UI
             });
 
+            await logSystemEvent({
+                user_id: kami.user_id,
+                kami_index: kami.kami_index,
+                kami_profile_id: profile.id,
+                action: 'manual_stop_harvest',
+                status: 'success',
+                message: `Manual harvest stopped for Kami #${kami.kami_index}.`,
+                metadata: { txHash: result.txHash }
+            });
+
             return res.json({
                 success: true,
                 txHash: result.txHash
             });
         } else {
+            await logSystemEvent({
+                user_id: kami.user_id,
+                kami_index: kami.kami_index,
+                kami_profile_id: profile.id,
+                action: 'manual_stop_harvest_fail',
+                status: 'error',
+                message: `Manual harvest stop failed for Kami #${kami.kami_index}: ${result.error}`,
+                metadata: { error: result.error }
+            });
+
             return res.status(500).json({
                 success: false,
                 error: result.error
