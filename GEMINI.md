@@ -431,6 +431,34 @@ User Starts Automation → Verify Blockchain Status → Start Harvest → Create
 Timer Expires → Query Blockchain Status → Stop Harvest → Update Supabase
 ```
 
+### On-Chain Transaction Requirements (CRITICAL)
+
+**1. Start Harvest (`HarvestStartSystem`)**
+- **Function**: `executeTyped`
+- **Arguments**: `(kamiID, nodeIndex, taxerID, taxAmt)`
+- **Requirement**: `taxerID` and `taxAmt` MUST be passed as `0`.
+- **Example**: `contract.executeTyped(kamiId, nodeIndex, 0, 0)`
+- **Output**: The transaction receipt logs contain the generated `harvestID` (topic index 3). This ID MUST be captured and stored.
+
+**2. Stop Harvest (`HarvestStopSystem`)**
+- **Function**: `executeTyped`
+- **Arguments**: `(harvestID)`
+- **Requirement**: Do **NOT** pass `kamiID`. You MUST use the unique `harvestID` generated when the harvest started.
+- **Lookup Strategy**:
+  1. Look up the active `Kami Profile`.
+  2. Query `system_logs` for the most recent successful `start_harvest` or `auto_start` event.
+  3. Extract `harvestID` from the log `metadata`.
+  4. If not found, the transaction cannot be executed safely.
+
+**3. Crafting (`CraftSystem`)**
+- **Function**: `executeTyped`
+- **Requirement**: **Stamina Check** is mandatory before submission.
+- **Logic**:
+  1. Fetch user account stamina from `GetterSystem`.
+  2. Calculate cost: `Recipe Cost * Amount`.
+  3. If `Current Stamina < Cost`, abort and log "Insufficient Stamina".
+  4. Do not rely on the contract to revert; prevent the transaction to save gas and reduce noise.
+
 ### Database Layer: Supabase (PostgreSQL)
 
 **Core Tables**:
@@ -1227,7 +1255,108 @@ Configuration confirmed:
 - Comprehensive logging: IMPLEMENTED
 - Frontend visibility: ACTIVE
 
-System is operational. Ready for enhancements, bug fixes, or new features.
 
-What would you like me to work on?
+## On-Chain Implementation Reference
+
+### 1. Standard Transaction Flow
+
+1.  **Load Configuration**: Import `SYSTEMS` IDs and `ABIs` using the `contractLoader` utility.
+2.  **Resolve Address**: Convert the System's `encodedID` (from `systems.json`) into a contract address using the `World` registry.
+3.  **Prepare Wallet**: Initialize `ethers.Wallet` with the decrypted private key.
+4.  **Execute**:
+    *   **Harvesting**: Use `contract.executeTyped(...)`.
+    *   **Crafting**: Use raw transaction data construction (selector + args) for reliability.
+5.  **Confirm & Log**: Wait for receipt, extract return values (like `HarvestID`), and log to `system_logs`.
+
+### 2. Address Resolution Pattern
+
+**Location**: `app/src/services/transactionService.ts`
+
+```typescript
+import { loadIds } from '../utils/contractLoader.js';
+const SYSTEMS = loadIds('systems.json');
+
+export async function getSystemAddress(systemId: string): Promise<string> {
+  // 1. Get Encoded ID
+  const encodedId = systemId; // e.g. SYSTEMS.HarvestStartSystem.encodedID
+
+  // 2. Query World Registry
+  const systemsRegistryAddress = await world.systems();
+  const systemsRegistry = new ethers.Contract(systemsRegistryAddress, RegistryABI, provider);
+
+  // 3. Get Entity ID -> Address
+  const systemAddresses = await systemsRegistry.getFunction('getEntitiesWithValue(bytes)')(encodedId);
+  const entityId = BigInt(systemAddresses[0].toString());
+  
+  // 4. Convert to Hex Address
+  return ethers.getAddress('0x' + entityId.toString(16).padStart(40, '0'));
+}
+```
+
+### 3. Harvest Transactions
+
+**Start Harvest (4 Arguments Required)**
+```typescript
+// Imports
+const HarvestStartSystem = loadAbi('HarvestStartSystem.json');
+const systemId = SYSTEMS.HarvestStartSystem.encodedID;
+
+// Execution
+const contract = new ethers.Contract(await getSystemAddress(systemId), HarvestStartSystem.abi, wallet);
+
+// CRITICAL: Must pass 4 arguments. Last two are TaxerID and TaxAmount (0 for both).
+const tx = await contract.executeTyped(
+  BigInt(kamiId), 
+  BigInt(nodeIndex), 
+  BigInt(0), // taxerID
+  BigInt(0), // taxAmt
+  { gasLimit: 2000000 }
+);
+
+// Parsing HarvestID from Receipt
+const receipt = await tx.wait();
+const harvestId = getHarvestIdFromReceipt(receipt); // Extracts from log topics[3]
+```
+
+**Stop Harvest (Uses HarvestID)**
+```typescript
+// Imports
+const HarvestStopSystem = loadAbi('HarvestStopSystem.json');
+const systemId = SYSTEMS.HarvestStopSystem.encodedID;
+
+// Execution
+const contract = new ethers.Contract(await getSystemAddress(systemId), HarvestStopSystem.abi, wallet);
+
+// CRITICAL: Must use HarvestID, NOT KamiID
+const tx = await contract.executeTyped(
+  BigInt(harvestId), // Retrieved from system_logs or state
+  { gasLimit: 2000000 }
+);
+```
+
+### 4. Crafting Transactions (Raw Data Pattern)
+
+**Location**: `app/src/services/craftingService.ts`
+
+For crafting, we construct the transaction data manually to ensure correct selector usage (`0x5c817c70`).
+
+```typescript
+const systemId = SYSTEMS.CraftSystem.encodedID;
+const systemAddress = await getSystemAddress(systemId);
+
+// Selector for craft(uint32,uint256)
+const selector = "0x5c817c70";
+const arg1 = recipeIndex.toString(16).padStart(64, '0');
+const arg2 = amount.toString(16).padStart(64, '0');
+const data = selector + arg1 + arg2;
+
+// Explicit Nonce Management (Recommended for high frequency)
+const nonce = await provider.getTransactionCount(wallet.address, 'pending');
+
+const tx = await wallet.sendTransaction({
+    to: systemAddress,
+    data: data,
+    gasLimit: 3000000,
+    nonce: nonce
+});
 ```
