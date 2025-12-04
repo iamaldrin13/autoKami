@@ -413,8 +413,3 @@ async function checkKami(profile: any) {
         });
     }
 }
-
-    } catch (error) {
-        console.error('[Automation] Loop error:', error);
-    }
-}
