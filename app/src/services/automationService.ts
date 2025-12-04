@@ -169,6 +169,10 @@ async function processAutomation() {
             .eq('auto_harvest_enabled', true);
 
         if (error) throw error;
+        
+        const profileCount = profiles ? profiles.length : 0;
+        console.log(`[Automation] ⏱️ Processing cycle for ${profileCount} active Kami profiles...`);
+
         if (!profiles || profiles.length === 0) return;
 
         // console.log(`[Automation] Processing ${profiles.length} active profiles...`);
@@ -204,6 +208,10 @@ async function processAutomation() {
                     
                     // A. Health Check (Emergency Stop)
                     const minHealth = profile.min_health_threshold || 20; // Default 20 HP
+                    
+                    // Verbose health log
+                    // console.log(`[Automation] Kami #${kami.kami_index}: Health Check ${currentHealth}/${minHealth}`);
+
                     if (currentHealth < minHealth) {
                         console.log(`[Automation] Kami #${kami.kami_index}: Low Health (${currentHealth} < ${minHealth}). Stopping...`);
                         

@@ -288,6 +288,7 @@ const CharacterManagerPWA = () => {
   const [isCraftingModalOpen, setIsCraftingModalOpen] = useState(false);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [configKami, setConfigKami] = useState<Kami | null>(null);
+  const [harvestCalc, setHarvestCalc] = useState<any>(null);
   
   // Settings State
   const [currentTheme, setCurrentTheme] = useState<keyof typeof THEMES>('arcade');
@@ -507,9 +508,114 @@ const CharacterManagerPWA = () => {
   const openConfigModal = useCallback(() => {
     if (selectedChar) {
       setConfigKami(selectedChar);
+      setHarvestCalc(null); // Reset calculations
       setIsConfigModalOpen(true);
     }
   }, [selectedChar]);
+
+  // Calculate harvest stats
+  const calculateHarvestStats = useCallback(() => {
+    if (!configKami) return;
+
+    const nodeIndex = configKami.automation?.harvestNodeIndex ?? configKami.room.index ?? 0;
+    const nodeType = NODE_LIST.find(n => n.id === nodeIndex)?.affinity?.toLowerCase() || 'normal';
+    const harvestDuration = configKami.automation?.harvestDuration || 60;
+    const restDuration = configKami.automation?.restDuration || 30;
+
+    // Get affinities
+    const bodyType = configKami.affinities[0]?.toLowerCase() || 'normal';
+    const handType = configKami.affinities[1]?.toLowerCase() || 'normal';
+
+    // Get skill bonuses from finalStats (assume they're included)
+    const power = configKami.finalStats.power;
+    const harmony = configKami.finalStats.harmony;
+    const violence = configKami.finalStats.violence;
+    const health = configKami.finalStats.health;
+
+    // Skill multipliers - these would come from the backend finalStats
+    const fertilityBoost = 0; // Default, could fetch from backend
+    const bountyBoost = 0.20; // Default assumption
+    const intensityBoost = 25; // Default assumption
+    const strainDecrease = 0.125; // Default assumption
+    const metabolismBoost = 0.25; // Default assumption
+
+    // Calculate affinity bonus
+    let affinityBonus = 1;
+
+    // Body calculations
+    if (bodyType === 'normal') {
+      affinityBonus += 0;
+    } else if (bodyType === nodeType) {
+      affinityBonus += 0.65 + fertilityBoost;
+    } else {
+      affinityBonus -= 0.25;
+    }
+
+    // Hand calculations
+    if (handType === 'normal') {
+      affinityBonus += 0;
+    } else if (handType === nodeType) {
+      affinityBonus += 0.35 + fertilityBoost;
+    } else {
+      affinityBonus -= 0.10;
+    }
+
+    // Harvest fertility
+    const harvestFertility = affinityBonus * 1.5 * power;
+
+    // Intensity at different times
+    const intensityStart = ((10 + intensityBoost) / 480) * ((5 * violence) + 0);
+    const intensity1Hour = ((10 + intensityBoost) / 480) * ((5 * violence) + 60);
+    const intensityAtDuration = ((10 + intensityBoost) / 480) * ((5 * violence) + harvestDuration);
+
+    // MUSU per hour
+    const musuPerHourStart = (1 + bountyBoost) * (harvestFertility + intensityStart);
+    const musuPerHour1Hour = (1 + bountyBoost) * (harvestFertility + intensity1Hour);
+    const musuPerHourAtDuration = (1 + bountyBoost) * (harvestFertility + intensityAtDuration);
+
+    // Strain (HP loss per hour)
+    const strainStart = (6.5 * (1 - strainDecrease) * musuPerHourStart) / (harmony + 20);
+    const strain1Hour = (6.5 * (1 - strainDecrease) * musuPerHour1Hour) / (harmony + 20);
+    const strainAtDuration = (6.5 * (1 - strainDecrease) * musuPerHourAtDuration) / (harmony + 20);
+
+    // Recovery
+    const recovery = 1.2 * harmony * (1 + metabolismBoost);
+
+    // Cycle calculations
+    const avgStrain = (strainStart + strainAtDuration) / 2;
+    const totalStrainPerCycle = avgStrain * (harvestDuration / 60);
+    const totalRecoveryPerCycle = recovery * (restDuration / 60);
+    const netHpPerCycle = totalRecoveryPerCycle - totalStrainPerCycle;
+    const cycleDuration = harvestDuration + restDuration;
+    const cyclesUntilDeath = health / Math.abs(totalStrainPerCycle - totalRecoveryPerCycle);
+
+    setHarvestCalc({
+      nodeType,
+      bodyType,
+      handType,
+      affinityBonus,
+      harvestFertility,
+      intensityStart,
+      intensity1Hour,
+      intensityAtDuration,
+      musuPerHourStart,
+      musuPerHour1Hour,
+      musuPerHourAtDuration,
+      strainStart,
+      strain1Hour,
+      strainAtDuration,
+      recovery,
+      avgStrain,
+      totalStrainPerCycle,
+      totalRecoveryPerCycle,
+      netHpPerCycle,
+      cycleDuration,
+      cyclesUntilDeath,
+      isSustainable: netHpPerCycle >= 0,
+      harvestDuration,
+      restDuration
+    });
+  }, [configKami]);
 
   // Open crafting modal
   const openCraftingModal = useCallback(() => {
@@ -976,8 +1082,8 @@ const CharacterManagerPWA = () => {
 
       {/* Config Modal */}
       {isConfigModalOpen && configKami && (
-        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4 font-mono">
-          <div className={`${theme.modal} w-full max-w-md text-white overflow-hidden shadow-2xl`}>
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4 font-mono overflow-y-auto">
+          <div className={`${theme.modal} w-full max-w-md text-white overflow-hidden shadow-2xl my-8`}>
             {/* Header */}
             <div className="bg-gray-800 p-4 border-b-4 border-gray-700 flex justify-between items-start">
               <div>
@@ -1088,17 +1194,144 @@ const CharacterManagerPWA = () => {
                   </div>
                 </label>
               </div>
+
+              {/* Compute Button */}
+              <div className="pt-4 border-t border-gray-700">
+                <button
+                  onClick={calculateHarvestStats}
+                  className="w-full bg-blue-500 hover:bg-blue-600 text-white px-4 py-3 rounded font-bold flex items-center justify-center gap-2 shadow-lg shadow-blue-500/20"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                  COMPUTE HARVEST STATS
+                </button>
+              </div>
+
+              {/* Calculation Results */}
+              {harvestCalc && (
+                <div className="mt-4 p-4 bg-gray-900/50 rounded border border-gray-700 space-y-3 text-sm">
+                  <div className="flex items-center justify-between border-b border-gray-700 pb-2">
+                    <span className="font-bold text-yellow-400">📊 HARVEST ANALYSIS</span>
+                    <span className="text-xs text-gray-500">
+                      {configKami.affinities.join('/')} on {harvestCalc.nodeType.toUpperCase()}
+                    </span>
+                  </div>
+
+                  {/* Affinity */}
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div>
+                      <span className="text-gray-400">Affinity Bonus:</span>
+                      <span className={`ml-2 font-bold ${harvestCalc.affinityBonus > 1.5 ? 'text-green-400' : harvestCalc.affinityBonus < 1 ? 'text-red-400' : 'text-yellow-400'}`}>
+                        {harvestCalc.affinityBonus.toFixed(2)}x
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-gray-400">Harvest Fertility:</span>
+                      <span className="ml-2 font-bold text-white">{harvestCalc.harvestFertility.toFixed(1)}</span>
+                    </div>
+                  </div>
+
+                  {/* MUSU Earnings */}
+                  <div className="bg-green-900/30 p-2 rounded">
+                    <div className="text-xs text-green-400 font-bold mb-1">💰 MUSU PER HOUR</div>
+                    <div className="grid grid-cols-3 gap-2 text-xs">
+                      <div>
+                        <div className="text-gray-400">Start</div>
+                        <div className="font-bold text-green-300">{harvestCalc.musuPerHourStart.toFixed(1)}</div>
+                      </div>
+                      <div>
+                        <div className="text-gray-400">@1hr</div>
+                        <div className="font-bold text-green-300">{harvestCalc.musuPerHour1Hour.toFixed(1)}</div>
+                      </div>
+                      <div>
+                        <div className="text-gray-400">@{harvestCalc.harvestDuration}m</div>
+                        <div className="font-bold text-green-300">{harvestCalc.musuPerHourAtDuration.toFixed(1)}</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Strain */}
+                  <div className="bg-red-900/30 p-2 rounded">
+                    <div className="text-xs text-red-400 font-bold mb-1">💔 STRAIN (HP Loss/hr)</div>
+                    <div className="grid grid-cols-3 gap-2 text-xs">
+                      <div>
+                        <div className="text-gray-400">Start</div>
+                        <div className="font-bold text-red-300">{harvestCalc.strainStart.toFixed(2)}</div>
+                      </div>
+                      <div>
+                        <div className="text-gray-400">@1hr</div>
+                        <div className="font-bold text-red-300">{harvestCalc.strain1Hour.toFixed(2)}</div>
+                      </div>
+                      <div>
+                        <div className="text-gray-400">Avg</div>
+                        <div className="font-bold text-red-300">{harvestCalc.avgStrain.toFixed(2)}</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Recovery & Cycle */}
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div>
+                      <span className="text-gray-400">Recovery/hr:</span>
+                      <span className="ml-2 font-bold text-blue-300">{harvestCalc.recovery.toFixed(2)} HP</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-400">Cycle Time:</span>
+                      <span className="ml-2 font-bold text-white">{harvestCalc.cycleDuration}m</span>
+                    </div>
+                  </div>
+
+                  {/* Per Cycle Stats */}
+                  <div className="bg-purple-900/30 p-2 rounded">
+                    <div className="text-xs text-purple-400 font-bold mb-1">🔄 PER CYCLE ({harvestCalc.harvestDuration}m harvest + {harvestCalc.restDuration}m rest)</div>
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      <div>
+                        <div className="text-gray-400">Strain</div>
+                        <div className="font-bold text-red-300">-{harvestCalc.totalStrainPerCycle.toFixed(1)} HP</div>
+                      </div>
+                      <div>
+                        <div className="text-gray-400">Recovery</div>
+                        <div className="font-bold text-blue-300">+{harvestCalc.totalRecoveryPerCycle.toFixed(1)} HP</div>
+                      </div>
+                    </div>
+                    <div className="mt-2 pt-2 border-t border-purple-800">
+                      <div className="text-gray-400">Net HP/Cycle:</div>
+                      <div className={`font-bold text-lg ${harvestCalc.netHpPerCycle >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        {harvestCalc.netHpPerCycle >= 0 ? '+' : ''}{harvestCalc.netHpPerCycle.toFixed(1)} HP
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Sustainability */}
+                  <div className={`p-3 rounded border-2 ${harvestCalc.isSustainable ? 'bg-green-900/30 border-green-500' : 'bg-red-900/30 border-red-500'}`}>
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold">
+                        {harvestCalc.isSustainable ? '✅ SUSTAINABLE' : '⚠️ NOT SUSTAINABLE'}
+                      </span>
+                      {!harvestCalc.isSustainable && (
+                        <span className="text-xs text-red-300">
+                          ~{harvestCalc.cyclesUntilDeath.toFixed(1)} cycles until death
+                        </span>
+                      )}
+                    </div>
+                    {harvestCalc.isSustainable && (
+                      <div className="text-xs text-green-300 mt-1">
+                        Can harvest indefinitely with this cycle
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Footer */}
             <div className="bg-gray-800 p-4 border-t-4 border-gray-700 flex justify-end gap-3">
-              <button 
+              <button
                 onClick={() => setIsConfigModalOpen(false)}
                 className="px-4 py-2 text-gray-400 hover:text-white font-bold"
               >
                 CANCEL
               </button>
-              <button 
+              <button
                 onClick={() => handleSaveConfig(configKami.automation)}
                 className="bg-green-500 hover:bg-green-600 text-white px-6 py-2 rounded font-bold flex items-center gap-2 shadow-lg shadow-green-500/20"
               >
@@ -1131,7 +1364,7 @@ const CharacterManagerPWA = () => {
               </button>
             </div>
 
-            <div className="p-6 space-y-6">
+            <div className="p-6 space-y-6 max-h-[70vh] overflow-y-auto">
               {/* Toggle */}
               <label className="flex items-center gap-3 cursor-pointer group">
                 <div className="relative">
