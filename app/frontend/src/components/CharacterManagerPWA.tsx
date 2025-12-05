@@ -469,6 +469,13 @@ const CharacterManagerPWA = () => {
     };
   }, [user?.id]);
 
+  // Add log entry
+  const addLog = useCallback((message: string, type: 'info' | 'success' | 'warning' | 'error' = 'info') => {
+    const now = new Date();
+    const time = now.toLocaleTimeString('en-US', { hour12: false });
+    setSystemLogs(prev => [{ id: Math.random().toString(), time, message, type }, ...prev.slice(0, 49)]);
+  }, []);
+
   // Global Error Handler (Capture browser console errors to UI)
   useEffect(() => {
     const handleError = (event: ErrorEvent) => {
@@ -492,13 +499,6 @@ const CharacterManagerPWA = () => {
       window.removeEventListener('unhandledrejection', handleRejection);
     };
   }, [addLog]);
-
-  // Add log entry
-  const addLog = useCallback((message: string, type: 'info' | 'success' | 'warning' | 'error' = 'info') => {
-    const now = new Date();
-    const time = now.toLocaleTimeString('en-US', { hour12: false });
-    setSystemLogs(prev => [{ id: Math.random().toString(), time, message, type }, ...prev.slice(0, 49)]);
-  }, []);
 
   // Refresh kamigotchis from blockchain
   const handleRefresh = useCallback(async () => {
