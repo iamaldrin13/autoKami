@@ -538,17 +538,15 @@ export async function logSystemEvent(event: SystemLog): Promise<void> {
 
         // Clean up verbose Ethers errors
         if (event.status === 'error') {
-            if (formattedMessage.includes('transaction execution reverted')) {
-                if (formattedMessage.includes('code=CALLEXCEPTION')) {
-                    formattedMessage = 'Transaction reverted by contract.\nPossible causes: Wrong Room, Cooldown active, or Not Owner.';
-                } else if (formattedMessage.includes('INSUFFICIENT_FUNDS')) {
-                    formattedMessage = 'Transaction failed: Insufficient funds for gas.';
-                } else {
-                    // Strip the verbose error object
-                    formattedMessage = formattedMessage.split('(')[0].trim() || 'Transaction execution reverted.';
-                }
+            if (formattedMessage.includes('code=CALL_EXCEPTION')) {
+                formattedMessage = 'Transaction reverted by contract.\nPossible causes: Wrong Room, Cooldown active, or Not Owner.';
+            } else if (formattedMessage.includes('INSUFFICIENT_FUNDS')) {
+                formattedMessage = 'Transaction failed: Insufficient funds for gas.';
             } else if (formattedMessage.includes('user rejected')) {
                 formattedMessage = 'Transaction rejected by user.';
+            } else if (formattedMessage.includes('action="sendTransaction"') || formattedMessage.includes('receipt={')) {
+                // Catch-all for other verbose transaction errors
+                formattedMessage = 'Transaction execution reverted. Check logs for details.';
             }
         }
 

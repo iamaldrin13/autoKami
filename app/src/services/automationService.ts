@@ -34,7 +34,12 @@ export async function runAutomationLoop() {
     const loop = async () => {
         try {
             await processAutomation();
-            await processCraftingAutomation();
+            
+            try {
+                await processCraftingAutomation(); 
+            } catch (craftErr) {
+                console.error('[Automation] Crafting cycle error:', craftErr);
+            }
         } catch (error) {
             console.error('[Automation] Loop iteration failed:', error);
         } finally {
@@ -99,9 +104,9 @@ export async function processCraftingAutomation() {
                      await logSystemEvent({
                         user_id: wallet.user_id,
                         action: 'auto_craft_skip',
-                        status: 'warning',
-                        message: `Insufficient Items for ${recipe.name}: ${missingStr}. Skipping and waiting ${setting.interval_minutes} mins.`,
-                        metadata: { missing: missingItems, recipe: recipe.name }
+                        status: 'info',
+                        message: `[Wallet: ${wallet.name}] Auto-crafting skipped: Insufficient Items for ${recipe.name}: ${missingStr}. Waiting ${setting.interval_minutes} mins.`,
+                        metadata: { missing: missingItems, recipe: recipe.name, wallet: wallet.name }
                     });
                     
                     // Update timer to wait for next interval
@@ -120,8 +125,8 @@ export async function processCraftingAutomation() {
                         user_id: wallet.user_id,
                         action: 'auto_craft_start',
                         status: 'info',
-                        message: `Stamina check passed (${stamina} >= ${requiredStamina}). Starting auto-craft for ${recipe.name} (x${setting.amount_to_craft})...`,
-                        metadata: { stamina, required: requiredStamina, recipe: recipe.name }
+                        message: `[Wallet: ${wallet.name}] Stamina check passed (${stamina} >= ${requiredStamina}). Starting auto-craft for ${recipe.name} (x${setting.amount_to_craft})...`,
+                        metadata: { stamina, required: requiredStamina, recipe: recipe.name, wallet: wallet.name }
                     });
 
                     let privateKey;
@@ -151,8 +156,8 @@ export async function processCraftingAutomation() {
                                 user_id: wallet.user_id,
                                 action: 'auto_craft',
                                 status: 'success',
-                                message: `Auto-crafted ${recipe.name} (x${setting.amount_to_craft}) for ${wallet.name}. Consumed ${requiredStamina} Stamina.`,
-                                metadata: { txHash: result.txHash, recipeId: setting.recipe_id, amount: setting.amount_to_craft, cost: requiredStamina }
+                                message: `[Wallet: ${wallet.name}] Auto-crafted ${recipe.name} (x${setting.amount_to_craft}). Consumed ${requiredStamina} Stamina.`,
+                                metadata: { txHash: result.txHash, recipeId: setting.recipe_id, amount: setting.amount_to_craft, cost: requiredStamina, wallet: wallet.name }
                             });
                         } else {
                             console.error(`[Crafting] Attempt ${attempt} failed: ${result.error}`);
@@ -168,8 +173,8 @@ export async function processCraftingAutomation() {
                                     user_id: wallet.user_id,
                                     action: 'auto_craft_fail',
                                     status: 'error',
-                                    message: `Auto-craft failed after 3 attempts: ${result.error}. Will retry in ${setting.interval_minutes} mins.`,
-                                    metadata: { error: result.error }
+                                    message: `[Wallet: ${wallet.name}] Auto-craft failed after 3 attempts: ${result.error}. Will retry in ${setting.interval_minutes} mins.`,
+                                    metadata: { error: result.error, wallet: wallet.name }
                                 });
                             }
                         }
@@ -181,9 +186,9 @@ export async function processCraftingAutomation() {
                     await logSystemEvent({
                         user_id: wallet.user_id,
                         action: 'auto_craft_skip',
-                        status: 'warning',
-                        message: `Insufficient Stamina (${stamina}/${requiredStamina}) for ${recipe.name}. Skipping and waiting ${setting.interval_minutes} mins.`,
-                        metadata: { stamina, required: requiredStamina, recipe: recipe.name }
+                        status: 'info',
+                        message: `[Wallet: ${wallet.name}] Auto-crafting skipped: Insufficient Stamina (${stamina}/${requiredStamina}) for ${recipe.name}. Waiting ${setting.interval_minutes} mins.`,
+                        metadata: { stamina, required: requiredStamina, recipe: recipe.name, wallet: wallet.name }
                     });
 
                     // Update last_run_at so we wait for the full interval before checking again
@@ -272,7 +277,7 @@ async function checkKami(profile: any) {
                     kami_profile_id: profile.id,
                     action: 'low_health_stop',
                     status: 'warning',
-                    message: `Health critically low (${currentHealth} / ${minHealth}). Emergency stop triggered (Node #${profile.harvest_node_index ?? '?'}).`
+                    message: `[Kami #${kami.kami_index} (${kami.kami_name || 'Unknown'})] Health critically low (${currentHealth} / ${minHealth}). Emergency stop triggered (Node #${profile.harvest_node_index ?? '?'}).`
                 });
 
                 const privateKey = await decryptPrivateKey(kami.encrypted_private_key);
@@ -314,7 +319,7 @@ async function checkKami(profile: any) {
                         kami_profile_id: profile.id,
                         action: 'auto_stop',
                         status: 'info',
-                        message: `Harvest duration exceeded (${Math.floor(elapsed/60000)}m / ${profile.harvest_duration}m). Stopping harvest (Node #${profile.harvest_node_index ?? '?'}).`
+                        message: `[Kami #${kami.kami_index} (${kami.kami_name || 'Unknown'})] Harvest time exceeded (${Math.floor(elapsed/60000)}m / ${profile.harvest_duration}m). Stopping harvest (Node #${profile.harvest_node_index ?? '?'}).`
                     });
 
                     const privateKey = await decryptPrivateKey(kami.encrypted_private_key);
@@ -364,7 +369,7 @@ async function checkKami(profile: any) {
                         kami_profile_id: profile.id,
                         action: 'auto_start',
                         status: 'info',
-                        message: `Rest duration exceeded (${Math.floor(elapsed/60000)}m / ${profile.rest_duration}m). Starting harvest at Node #${nodeIndex}.`
+                        message: `[Kami #${kami.kami_index} (${kami.kami_name || 'Unknown'})] Rest duration exceeded (${Math.floor(elapsed/60000)}m / ${profile.rest_duration}m). Starting harvest at Node #${nodeIndex}.`
                     });
 
                     const privateKey = await decryptPrivateKey(kami.encrypted_private_key);
@@ -456,7 +461,7 @@ async function checkKami(profile: any) {
             kami_profile_id: profile.id,
             action: 'automation_error',
             status: 'error',
-            message: `Automation failed: ${errorMsg}`,
+            message: `[Kami #${kami.kami_index} (${kami.kami_name || 'Unknown'})] Automation failed: ${errorMsg}`,
             metadata: { error: errorMsg }
         });
     }

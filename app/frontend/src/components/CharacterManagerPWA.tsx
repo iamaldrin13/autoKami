@@ -9,7 +9,7 @@ import {
   getSystemLogs,
   deleteKamigotchi,
   updateAutomation,
-  stopHarvestKamigotchi,
+  startHarvestKamigotchi,
   getHarvestStatus,
   type AutomationSettings,
   addProfile,
@@ -284,6 +284,7 @@ const CharacterManagerPWA = () => {
   const [selectedChar, setSelectedChar] = useState<Kami | null>(null);
   const [systemLogs, setSystemLogs] = useState<SystemLog[]>([]);
   const [characters, setCharacters] = useState<Kami[]>([]);
+  const [processingKamiIds, setProcessingKamiIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -534,71 +535,88 @@ const CharacterManagerPWA = () => {
     const char = characters.find(c => c.id === charId);
     if (!char) return;
 
-    const originalState = char.running;
+    if (processingKamiIds.includes(charId)) return;
+
     const isStarting = !char.running;
-    
-    // Optimistic update
-    setCharacters(chars => chars.map(c => c.id === charId ? { ...c, running: isStarting } : c));
-    addLog(`Character "${char.name}" ${isStarting ? 'starting' : 'stopping'}...`, 'info');
+    setProcessingKamiIds(prev => [...prev, charId]);
 
     try {
       if (isStarting) {
-          // STARTING: Just enable automation
-          const { success } = await updateAutomation(char.id, { autoHarvestEnabled: true });
-          if (success) {
-            addLog(`Automation ENABLED for "${char.name}".`, 'success');
+          addLog(`Checking status for "${char.name}"...`, 'info');
+          const status = await getHarvestStatus(char.entity_id);
+          
+          if (status.isHarvesting) {
+             // ALREADY HARVESTING -> Just Enable Automation
+             addLog(`"${char.name}" is already harvesting. Enabling automation...`, 'info');
+             const { success } = await updateAutomation(char.id, { autoHarvestEnabled: true });
+             if (success) {
+                 setCharacters(chars => chars.map(c => c.id === charId ? { ...c, running: true } : c));
+                 addLog(`Automation ENABLED for "${char.name}".`, 'success');
+             } else {
+                 throw new Error('Failed to enable automation settings.');
+             }
           } else {
-            throw new Error('Backend returned failure');
+             // RESTING -> Start Harvest (Robust Action)
+             addLog(`"${char.name}" is Resting. Initiating Start Sequence...`, 'info');
+             
+             // 1. Call Start Harvest (Triggers TX + Enables Automation)
+             const result = await startHarvestKamigotchi(char.id);
+             
+             if (result.success) {
+                 addLog(`Start transaction sent (ID: ${result.harvestId || '?'}). Verifying on-chain...`, 'success');
+                 
+                 // 2. Wait 10s
+                 await new Promise(resolve => setTimeout(resolve, 10000));
+                 
+                 // 3. Verify
+                 let verifyStatus = await getHarvestStatus(char.entity_id);
+                 if (verifyStatus.isHarvesting) {
+                     setCharacters(chars => chars.map(c => c.id === charId ? { ...c, running: true } : c));
+                     addLog(`Confirmed: "${char.name}" is now harvesting!`, 'success');
+                 } else {
+                     addLog(`Verification 1 failed. Retrying in 20s...`, 'warning');
+                     // 4. Wait 20s
+                     await new Promise(resolve => setTimeout(resolve, 20000));
+                     
+                     verifyStatus = await getHarvestStatus(char.entity_id);
+                     if (verifyStatus.isHarvesting) {
+                         setCharacters(chars => chars.map(c => c.id === charId ? { ...c, running: true } : c));
+                         addLog(`Confirmed: "${char.name}" is now harvesting!`, 'success');
+                     } else {
+                         throw new Error('Harvest start timed out. Please check blockchain.');
+                     }
+                 }
+             } else {
+                 throw new Error(result.error || 'Start transaction failed');
+             }
           }
       } else {
-          // STOPPING: 
-          // 1. Disable automation (so it doesn't auto-restart)
-          await updateAutomation(char.id, { autoHarvestEnabled: false });
-          addLog(`Automation DISABLED for "${char.name}". Checking on-chain status...`, 'info');
-
-          // 2. Check status BEFORE trying to stop
-          // We use entity_id for the blockchain check
-          try {
-              const status = await getHarvestStatus(char.entity_id);
-              
-              if (status.isHarvesting) {
-                  addLog(`Kami is active. Sending stop harvest transaction...`, 'info');
-                  const result = await stopHarvestKamigotchi(char.id);
-                  
-                  if (result.success) {
-                     addLog(`Harvest STOPPED for "${char.name}" (Tx: ${result.txHash?.substring(0, 8)}...)`, 'success');
-                  } else {
-                     const msg = result.error || 'Unknown error';
-                     addLog(`Failed to stop harvest: ${msg}`, 'error');
-                  }
-              } else {
-                  addLog(`Kami is already Resting/Idle. No transaction needed.`, 'success');
-              }
-          } catch (checkErr: any) {
-              console.error('Failed to check status:', checkErr);
-              addLog(`Could not verify on-chain status. Manual stop skipped.`, 'warning');
+          // STOPPING
+          const nodeName = NODE_LIST.find(n => n.id === (configKami?.automation?.harvestNodeIndex || char.room.index))?.name || 'Unknown Node';
+          addLog(`Stopping auto harvest for "${char.name}" at ${nodeName}...`, 'info');
+          
+          // 1. Disable automation
+          const { success } = await updateAutomation(char.id, { autoHarvestEnabled: false });
+          
+          if (success) {
+              setCharacters(chars => chars.map(c => c.id === charId ? { ...c, running: false } : c));
+              addLog(`Automation DISABLED for "${char.name}".`, 'success');
+          } else {
+              throw new Error('Failed to disable automation.');
           }
       }
 
     } catch (err: any) {
       console.error('Failed to toggle automation', err);
-      // Only revert UI if the initial switch failed (updateAutomation)
-      // If we are stopping, and updateAutomation worked but stopHarvest failed, we DO NOT revert.
+      addLog(`Action failed: ${err.message}`, 'error');
+      // If we failed to start, ensure UI reflects stopped
       if (isStarting) {
-         setCharacters(chars => chars.map(c => c.id === charId ? { ...c, running: originalState } : c));
-         addLog(`Failed to start: ${err.message}`, 'error');
-      } else {
-         // For stopping, if updateAutomation failed, we revert.
-         if (!err.response && err.message !== 'Backend returned failure') {
-             // Assume it was the stopHarvest call that threw? 
-             // stopHarvestKamigotchi catches errors and returns {success:false}, so it shouldn't throw here unless network error.
-             // If updateAutomation threw, we revert.
-             setCharacters(chars => chars.map(c => c.id === charId ? { ...c, running: originalState } : c));
-             addLog(`Failed to stop: ${err.message}`, 'error');
-         }
+          setCharacters(chars => chars.map(c => c.id === charId ? { ...c, running: false } : c));
       }
+    } finally {
+        setProcessingKamiIds(prev => prev.filter(id => id !== charId));
     }
-  }, [characters, addLog]);
+  }, [characters, processingKamiIds, addLog]);
 
   // Delete kamigotchi
   const deleteCharacter = useCallback(async (charId: string) => {
@@ -1034,7 +1052,7 @@ const CharacterManagerPWA = () => {
               <div className={`${currentTheme === 'frosted' ? 'bg-white/20' : 'bg-gray-300'} p-3 flex gap-2 border-t-4 border-gray-800/20 flex-shrink-0 overflow-x-auto`}>
                 {/* Start/Stop Button */}
                 <button
-                  disabled={!selectedChar}
+                  disabled={!selectedChar || processingKamiIds.includes(selectedChar.id)}
                   onClick={() => selectedChar && toggleAutomation(selectedChar.id)}
                   className={`flex-1 py-3 px-2 flex items-center justify-center gap-2 ${theme.button} text-white
                     ${selectedChar?.running
@@ -1043,8 +1061,16 @@ const CharacterManagerPWA = () => {
                     disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-400 disabled:border-gray-500
                   `}
                 >
-                  {selectedChar?.running ? <Square className="w-5 h-5" fill="white" /> : <Play className="w-5 h-5" fill="white" />}
-                  <span className="hidden sm:inline">{selectedChar?.running ? 'STOP' : 'START'}</span>
+                  {processingKamiIds.includes(selectedChar?.id || '') ? (
+                    <RefreshCw className="w-5 h-5 animate-spin" />
+                  ) : (
+                    selectedChar?.running ? <Square className="w-5 h-5" fill="white" /> : <Play className="w-5 h-5" fill="white" />
+                  )}
+                  <span className="hidden sm:inline">
+                    {processingKamiIds.includes(selectedChar?.id || '') 
+                        ? 'PROCESSING...' 
+                        : (selectedChar?.running ? 'STOP' : 'START')}
+                  </span>
                 </button>
 
                 <button
@@ -1089,12 +1115,12 @@ const CharacterManagerPWA = () => {
             </div>
 
             {/* System Logs */}
-            <div className={`${theme.card} overflow-hidden flex-shrink-0 h-48 flex flex-col`}>
-              <div className={`${currentTheme === 'frosted' ? 'bg-black/40 text-white' : 'bg-gray-700 text-white'} p-3 border-b-4 border-gray-800/20 flex-shrink-0`}>
+            <div className={`${theme.card} overflow-hidden flex-shrink-0 h-56 flex flex-col`}>
+              <div className={`${currentTheme === 'frosted' ? 'bg-black/40 text-white' : 'bg-gray-700 text-white'} p-2 border-b-4 border-gray-800/20 flex-shrink-0`}>
                 <span className="font-bold text-lg">SYSTEM LOGS</span>
               </div>
               <div className="p-4 flex-1 overflow-y-auto bg-gray-900/90 text-gray-300">
-                <div className="space-y-2 font-mono text-sm">
+                <div className="space-y-2 font-mono text-sm whitespace-pre-wrap break-words">
                   {systemLogs.map((log) => (
                     <div 
                       key={log.id}
@@ -1105,7 +1131,7 @@ const CharacterManagerPWA = () => {
                         'text-gray-300'
                       }`}
                     >
-                      <span className="text-gray-500">[{log.time}]</span>
+                      <span className="text-gray-500 flex-shrink-0">[{log.time}]</span>
                       <span>{log.message}</span>
                     </div>
                   ))}
