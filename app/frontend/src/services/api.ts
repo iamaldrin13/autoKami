@@ -310,7 +310,7 @@ export interface WatchlistItem {
   createdAt: string;
 }
 
-export const getWatchlist = async (privyUserId: string): Promise<WatchlistItem[]> {
+export const getWatchlist = async (privyUserId: string): Promise<WatchlistItem[]> => {
   const response = await api.get('/watchlist', { params: { privyUserId } });
   return response.data.items;
 };
@@ -319,7 +319,7 @@ export const addToWatchlist = async (
   privyUserId: string, 
   data: { accountId: string; accountName?: string; kamiEntityId: string; kamiName?: string }
 ): Promise<WatchlistItem> => {
-  const response = await api.post('/watchlist', data);
+  const response = await api.post('/watchlist', { ...data, privyUserId });
   return response.data.item;
 };
 
