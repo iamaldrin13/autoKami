@@ -630,7 +630,7 @@ const CharacterManagerPWA = () => {
 
     console.log('[Realtime] Subscribing to system_logs...');
     const channel = supabase
-      .channel('system-logs-feed')
+      .channel(`system-logs-${user.id}`)
       .on(
         'postgres_changes',
         {
