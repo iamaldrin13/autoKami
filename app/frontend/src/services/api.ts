@@ -300,4 +300,42 @@ export const getAccountStamina = async (accountId: string): Promise<number> => {
   return response.data.stamina;
 };
 
+// Watchlist API
+export interface WatchlistItem {
+  id: string;
+  accountId: string;
+  accountName?: string;
+  kamiEntityId: string;
+  kamiName?: string;
+  createdAt: string;
+}
+
+export const getWatchlist = async (privyUserId: string): Promise<WatchlistItem[]> {
+  const response = await api.get('/watchlist', { params: { privyUserId } });
+  return response.data.items;
+};
+
+export const addToWatchlist = async (
+  privyUserId: string, 
+  data: { accountId: string; accountName?: string; kamiEntityId: string; kamiName?: string }
+): Promise<WatchlistItem> => {
+  const response = await api.post('/watchlist', data);
+  return response.data.item;
+};
+
+export const removeFromWatchlist = async (privyUserId: string, kamiEntityId: string): Promise<{ success: boolean }> => {
+  const response = await api.delete(`/watchlist/${kamiEntityId}`, { params: { privyUserId } });
+  return response.data;
+};
+
+export const searchAccount = async (query: string): Promise<any> => {
+  const response = await api.get('/watchlist/search', { params: { query } });
+  return response.data.account;
+};
+
+export const getKamisByAccount = async (accountId: string): Promise<any[]> => {
+  const response = await api.get(`/account/${accountId}/kamis`);
+  return response.data.kamis;
+};
+
 export default api;

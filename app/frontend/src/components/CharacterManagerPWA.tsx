@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, memo } from 'react';
-import { Play, Square, Settings, Trash2, ChevronLeft, ChevronRight, RefreshCw, X, Save, Plus, Send, LogOut, Hammer, Sliders } from 'lucide-react';
+import { Play, Square, Settings, Trash2, ChevronLeft, ChevronRight, RefreshCw, X, Save, Plus, Send, LogOut, Hammer, Sliders, Eye } from 'lucide-react';
 import { usePrivy } from '@privy-io/react-auth';
 import { RECIPE_LIST } from '../assets/recipeList';
 import { 
@@ -16,7 +16,13 @@ import {
   updateTelegramSettings,
   getUserSettings,
   sendTestTelegramMessage,
-  getAccountStamina
+  getAccountStamina,
+  getWatchlist,
+  addToWatchlist,
+  removeFromWatchlist,
+  searchAccount,
+  getKamisByAccount,
+  type WatchlistItem
 } from '../services/api';
 import { supabase } from '../services/supabase';
 import { NODE_LIST } from '../assets/nodeList';
@@ -204,6 +210,13 @@ const StatusTimer = ({ char }: { char: Kami }) => {
 
   useEffect(() => {
     const updateTimer = () => {
+      // 1. Dead Check
+      if (char.currentHealth !== undefined && char.currentHealth <= 0) {
+          setLabel('DEAD');
+          setTimeLeft('');
+          return;
+      }
+
       const now = Date.now();
       let targetTime = 0;
       let currentLabel = '';
@@ -232,8 +245,16 @@ const StatusTimer = ({ char }: { char: Kami }) => {
         setTimeLeft(`${minutes}m ${seconds}s`);
         setLabel(currentLabel);
       } else {
-        setTimeLeft('Ready');
-        setLabel(currentLabel);
+        // Timer Finished
+        if (currentLabel === 'Harvesting') {
+            // Automation is active, but timer expired. Backend hasn't stopped it yet.
+            setTimeLeft('Finished');
+            setLabel('Harvesting');
+        } else {
+            // Resting timer finished
+            setTimeLeft('Ready');
+            setLabel('Resting');
+        }
       }
     };
 
@@ -245,12 +266,12 @@ const StatusTimer = ({ char }: { char: Kami }) => {
   return (
     <div className="text-center">
       <div className="font-bold mb-1">Status</div>
-      <div className={`font-bold ${char.running ? 'text-green-500' : 'text-gray-500'}`}>
-        {char.running ? '● RUNNING' : '○ STOPPED'}
+      <div className={`font-bold ${char.currentHealth !== undefined && char.currentHealth <= 0 ? 'text-red-600' : char.running ? 'text-green-500' : 'text-gray-500'}`}>
+        {char.currentHealth !== undefined && char.currentHealth <= 0 ? '● DEAD' : char.running ? '● RUNNING' : '○ STOPPED'}
       </div>
-      {timeLeft && (
-        <div className="text-xs font-mono mt-1 text-gray-600 bg-gray-100 rounded px-2 py-1 inline-block border border-gray-300">
-          {label}: {timeLeft}
+      {(timeLeft || label === 'DEAD') && (
+        <div className={`text-xs font-mono mt-1 rounded px-2 py-1 inline-block border ${label === 'DEAD' ? 'bg-red-100 border-red-300 text-red-600' : 'bg-gray-100 border-gray-300 text-gray-600'}`}>
+          {label === 'DEAD' ? 'AUTOMATION STOPPED' : `${label}: ${timeLeft}`}
         </div>
       )}
     </div>
@@ -416,6 +437,69 @@ const CharacterManagerPWA = () => {
   const [newProfile, setNewProfile] = useState({ name: '', address: '', privateKey: '' });
   const [telegramConfig, setTelegramConfig] = useState({ botToken: '', chatId: '' });
   const [craftingProfileStamina, setCraftingProfileStamina] = useState<number | null>(null);
+
+  // Watchlist State
+  const [isWatchlistModalOpen, setIsWatchlistModalOpen] = useState(false);
+  const [watchlist, setWatchlist] = useState<WatchlistItem[]>([]);
+  const [watchlistSearchQuery, setWatchlistSearchQuery] = useState('');
+  const [watchlistSearchResults, setWatchlistSearchResults] = useState<any[]>([]);
+  const [watchlistAccount, setWatchlistAccount] = useState<any>(null);
+  const [loadingWatchlist, setLoadingWatchlist] = useState(false);
+
+  // Load Watchlist
+  useEffect(() => {
+    if (authenticated && user && isWatchlistModalOpen) {
+      getWatchlist(user.id).then(setWatchlist).catch(console.error);
+    }
+  }, [authenticated, user, isWatchlistModalOpen]);
+
+  // Search Account for Watchlist
+  const handleWatchlistSearch = useCallback(async () => {
+    if (!watchlistSearchQuery) return;
+    setLoadingWatchlist(true);
+    setWatchlistAccount(null);
+    setWatchlistSearchResults([]);
+    
+    try {
+        const account = await searchAccount(watchlistSearchQuery);
+        if (account) {
+            setWatchlistAccount(account);
+            // Auto-fetch kamis for this account
+            const kamis = await getKamisByAccount(account.id);
+            setWatchlistSearchResults(kamis);
+        }
+    } catch (err: any) {
+        alert(err.response?.data?.error || 'Account not found');
+    } finally {
+        setLoadingWatchlist(false);
+    }
+  }, [watchlistSearchQuery]);
+
+  // Add/Remove Watchlist
+  const toggleWatchlistItem = useCallback(async (kami: any) => {
+      if (!user?.id || !watchlistAccount) return;
+      
+      const existing = watchlist.find(w => w.kamiEntityId === kami.id);
+      
+      if (existing) {
+          // Remove
+          try {
+              await removeFromWatchlist(user.id, kami.id);
+              setWatchlist(prev => prev.filter(w => w.kamiEntityId !== kami.id));
+          } catch (e) { console.error(e); }
+      } else {
+          // Add
+          try {
+              const item = await addToWatchlist(user.id, {
+                  accountId: watchlistAccount.id,
+                  accountName: watchlistAccount.name,
+                  kamiEntityId: kami.id,
+                  kamiName: kami.name
+              });
+              setWatchlist(prev => [item, ...prev]);
+          } catch (e) { console.error(e); }
+      }
+  }, [user?.id, watchlist, watchlistAccount]);
 
   // Fetch stamina when crafting modal opens
   useEffect(() => {
@@ -1218,6 +1302,13 @@ const CharacterManagerPWA = () => {
                   <span className="hidden sm:inline">DELETE</span>
                 </button>
                 <button
+                  onClick={() => setIsWatchlistModalOpen(true)}
+                  className={`flex-1 py-3 px-2 flex items-center justify-center gap-2 ${theme.button} ${currentTheme === 'arcade' ? 'bg-white hover:bg-gray-100' : 'bg-white/80 hover:bg-white'} disabled:opacity-50 disabled:cursor-not-allowed`}
+                >
+                  <Eye className="w-5 h-5" />
+                  <span className="hidden sm:inline">WATCHLIST</span>
+                </button>
+                <button
                   onClick={() => setIsSettingsModalOpen(true)}
                   className={`flex-1 py-3 px-2 flex items-center justify-center gap-2 ${theme.button} ${currentTheme === 'arcade' ? 'bg-white hover:bg-gray-100' : 'bg-white/80 hover:bg-white'} disabled:opacity-50 disabled:cursor-not-allowed`}
                 >
@@ -1256,6 +1347,105 @@ const CharacterManagerPWA = () => {
       </div>
 
       {/* Mobile Character Details Modal Removed */}
+
+      {/* Watchlist Modal */}
+      {isWatchlistModalOpen && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4 font-mono">
+          <div className={`${theme.modal} w-full max-w-2xl overflow-hidden shadow-2xl max-h-[90vh] overflow-y-auto`}>
+            <div className="p-4 border-b-4 border-gray-700 flex justify-between items-center bg-gray-800 sticky top-0 z-10">
+              <h2 className="text-xl font-bold flex items-center gap-2">
+                <Eye className="w-6 h-6" />
+                WATCHLIST
+              </h2>
+              <button onClick={() => setIsWatchlistModalOpen(false)} className="text-gray-400 hover:text-white">
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-6">
+                {/* Search Section */}
+                <div className="bg-black/20 p-4 rounded-lg">
+                    <label className="block text-sm font-bold mb-2 text-gray-400">Add Account (ID Only)</label>
+                    <div className="flex gap-2">
+                        <input 
+                            type="text" 
+                            placeholder="e.g. 11835..." 
+                            className={`${theme.input} flex-1 p-2`}
+                            value={watchlistSearchQuery}
+                            onChange={(e) => setWatchlistSearchQuery(e.target.value)}
+                        />
+                        <button 
+                            onClick={handleWatchlistSearch}
+                            disabled={loadingWatchlist}
+                            className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded font-bold"
+                        >
+                            {loadingWatchlist ? 'LOADING...' : 'SEARCH'}
+                        </button>
+                    </div>
+                    <div className="text-xs text-gray-500 mt-1">Currently supports Account ID (uint256) only.</div>
+                </div>
+
+                {/* Search Results */}
+                {watchlistAccount && (
+                    <div className="space-y-2">
+                        <div className="flex justify-between items-center border-b border-gray-700 pb-2">
+                            <span className="font-bold text-green-400">{watchlistAccount.name} (#{watchlistAccount.index})</span>
+                            <span className="text-xs text-gray-500">ID: {watchlistAccount.id.substring(0, 10)}...</span>
+                        </div>
+                        
+                        <div className="max-h-64 overflow-y-auto space-y-1 pr-2">
+                            {watchlistSearchResults.map(kami => {
+                                const isAdded = watchlist.some(w => w.kamiEntityId === kami.id);
+                                return (
+                                    <div key={kami.id} className="flex justify-between items-center bg-gray-800 p-2 rounded border border-gray-700">
+                                        <div className="flex items-center gap-3">
+                                            <img src={`https://i.test.kamigotchi.io/kami/${kami.mediaURI}.gif`} className="w-8 h-8 bg-gray-700 rounded" />
+                                            <div>
+                                                <div className="font-bold text-sm">{kami.name}</div>
+                                                <div className="text-xs text-gray-500">Lv.{kami.level} • {kami.state}</div>
+                                            </div>
+                                        </div>
+                                        <button 
+                                            onClick={() => toggleWatchlistItem(kami)}
+                                            className={`w-8 h-8 flex items-center justify-center rounded font-bold ${isAdded ? 'bg-red-500 hover:bg-red-600 text-white' : 'bg-green-500 hover:bg-green-600 text-white'}`}
+                                        >
+                                            {isAdded ? '-' : '+'}
+                                        </button>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                )}
+
+                {/* Current Watchlist */}
+                <div>
+                    <h3 className="text-lg font-bold text-yellow-400 border-b border-gray-700 pb-2 mb-4">YOUR WATCHLIST</h3>
+                    {watchlist.length === 0 ? (
+                        <div className="text-gray-500 text-center p-4">No items in watchlist</div>
+                    ) : (
+                        <div className="grid gap-2">
+                            {watchlist.map(item => (
+                                <div key={item.id} className="flex justify-between items-center bg-gray-800/50 p-3 rounded border border-gray-700">
+                                    <div>
+                                        <div className="font-bold">{item.kamiName || 'Unknown Kami'}</div>
+                                        <div className="text-xs text-gray-400">Owner: {item.accountName || 'Unknown'}</div>
+                                    </div>
+                                    <button 
+                                        onClick={() => removeFromWatchlist(user!.id, item.kamiEntityId).then(() => setWatchlist(p => p.filter(x => x.id !== item.id)))}
+                                        className="text-red-400 hover:text-red-300"
+                                    >
+                                        <Trash2 className="w-4 h-4" />
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            </div>
+          </div>
+        </div>
+      )}
       
       {/* Settings Modal */}
       {isSettingsModalOpen && (

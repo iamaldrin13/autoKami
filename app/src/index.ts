@@ -44,7 +44,13 @@ app.get('/health', (req, res) => {
 
 // Routes
 app.use('/api/kami', kamiRoutes);
+import watchlistRoutes from './routes/watchlistRoutes.js';
+
+// ... (existing imports)
+
+app.use('/api/watchlist', watchlistRoutes);
 app.use('/api/account', accountRoutes);
+
 app.use('/api/transaction', transactionRoutes);
 app.use('/api/farming', farmingRoutes);
 app.use('/api/harvest', harvestRoutes);

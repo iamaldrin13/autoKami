@@ -682,4 +682,58 @@ export async function getSystemLogs(userId: string, limit: number = 50): Promise
   return data || [];
 }
 
+// Watchlist Operations
+export interface WatchlistItem {
+  id: string;
+  user_id: string;
+  account_id: string;
+  account_name?: string;
+  kami_entity_id: string;
+  kami_name?: string;
+  created_at: string;
+}
+
+export async function addToWatchlist(userId: string, item: {
+  accountId: string;
+  accountName?: string;
+  kamiEntityId: string;
+  kamiName?: string;
+}): Promise<WatchlistItem> {
+  const { data, error } = await supabase
+    .from('watchlists')
+    .insert({
+      user_id: userId,
+      account_id: item.accountId,
+      account_name: item.accountName,
+      kami_entity_id: item.kamiEntityId,
+      kami_name: item.kamiName
+    })
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
+export async function removeFromWatchlist(userId: string, kamiEntityId: string): Promise<void> {
+  const { error } = await supabase
+    .from('watchlists')
+    .delete()
+    .eq('user_id', userId)
+    .eq('kami_entity_id', kamiEntityId);
+
+  if (error) throw error;
+}
+
+export async function getWatchlist(userId: string): Promise<WatchlistItem[]> {
+  const { data, error } = await supabase
+    .from('watchlists')
+    .select('*')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false });
+
+  if (error) throw error;
+  return data || [];
+}
+
 export default supabase;

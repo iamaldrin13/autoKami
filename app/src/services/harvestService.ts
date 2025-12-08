@@ -137,12 +137,12 @@ export async function stopHarvestByKamiId(kamiId: string, privateKey: string): P
         }
         console.log(`[Harvest] ✓ Found Profile ID: ${profile.id}`);
 
-        // 2. Get last auto_start log
+        // 2. Get last auto_start or manual_start_harvest log
         const { data: log, error: logError } = await supabase
             .from('system_logs')
             .select('metadata, created_at')
             .eq('kami_profile_id', profile.id)
-            .eq('action', 'auto_start')
+            .in('action', ['auto_start', 'manual_start_harvest'])
             .order('created_at', { ascending: false })
             .limit(1)
             .single();
@@ -152,7 +152,7 @@ export async function stopHarvestByKamiId(kamiId: string, privateKey: string): P
             harvestId = (log.metadata as any).harvestId;
             console.log(`[Harvest] 🎯 Found Harvest ID: ${harvestId} (from log at ${log.created_at})`);
         } else {
-            console.warn(`[Harvest] ⚠️ No 'auto_start' log found with harvestId for this profile.`);
+            console.warn(`[Harvest] ⚠️ No 'auto_start' or 'manual_start_harvest' log found with harvestId for this profile.`);
         }
 
         if (!harvestId) {

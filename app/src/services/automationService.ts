@@ -458,6 +458,25 @@ async function checkKami(profile: any) {
         const errorMsg = err instanceof Error ? err.message : 'Unknown automation error';
         console.error(`[Automation] Error processing Kami #${kami.kami_index}:`, errorMsg);
         
+        // Handle critical "Missing Harvest ID" error specifically
+        if (errorMsg.includes("Could not find active Harvest ID")) {
+             console.warn(`[Automation] Critical Error for Kami #${kami.kami_index}. Disabling automation to prevent loop.`);
+             
+             // Disable automation
+             await updateKamiProfile(profile.kamigotchi_id, { auto_harvest_enabled: false });
+             
+             await logSystemEvent({
+                user_id: userId,
+                kami_index: kami.kami_index,
+                kami_profile_id: profile.id,
+                action: 'automation_stopped_critical',
+                status: 'error',
+                message: `[Kami #${kami.kami_index}] CRITICAL: Active Harvest ID lost (likely started manually before update). Automation DISABLED. Please STOP harvest manually via game UI to reset state.`,
+                metadata: { error: errorMsg }
+            });
+            return;
+        }
+
         await logSystemEvent({
             user_id: userId,
             kami_index: kami.kami_index,

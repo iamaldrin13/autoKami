@@ -1273,6 +1273,59 @@ User Login (Privy) → Frontend (React PWA) → API Server (Express) → Automat
 4. **Analytics Dashboard**: Visualize harvest earnings, automation statistics
 5. **Mobile Optimization**: Enhanced PWA features for mobile users
 
+## Feature Research: Watchlist Strategy
+
+### Goal
+Efficiently track whether specific accounts or Kamigotchis are harvesting on specific nodes (e.g., monitoring if 'boom' is at Node 72).
+
+### Strategy Comparison
+
+#### 1. Node-Based Scanning (Tried & Rejected)
+*   **Approach**: Query `IndexRoomComponent` or `IndexNodeComponent` to get all entities at a specific `NodeIndex`.
+*   **Result**: The `getEntitiesWithValue` call failed for these components (likely due to large return data or ABI mismatch).
+*   **Fallback**: Scanning `getKamiByIndex(0...N)` to find Kamis at the node.
+*   **Performance**: O(N) where N is total Kamis. Very slow (scanned 2000 indices).
+*   **Verdict**: **Inefficient** for real-time tracking.
+
+#### 2. Account-Based Tracking (Recommended)
+*   **Approach**: Target specific accounts of interest. Query their owned entities and check *their* location.
+*   **Performance**: O(1) + O(K) where K is owned Kamis (usually < 50). Extremely fast.
+*   **Verdict**: **Optimal**.
+
+### Implementation Pattern
+
+**Key Components**:
+*   `IDOwnsKamiComponent`: Maps Account ID -> List of Kami Entity IDs.
+*   `GetterSystem`: Provides `getAccount(id)` and `getKami(id)`.
+*   `KamiIndex`: Helper to get the user-friendly Kami Index (e.g., #980) from the long Entity ID.
+
+**Code Snippet (Service Layer)**:
+
+```typescript
+async function checkAccountActivity(targetAccountId: string, targetNodeIndex: number) {
+    // 1. Get Owned Kamis
+    const ownedEntities = await OwnsKamiContract.getEntitiesWithValue(BigInt(targetAccountId));
+    
+    const matches = [];
+    
+    // 2. Check each Kami's Status
+    for (const entityId of ownedEntities) {
+        const kami = await GetterSystem.getKami(entityId);
+        
+        if (Number(kami.room) === targetNodeIndex) {
+            matches.push({
+                id: entityId.toString(),
+                name: kami.name,
+                state: kami.state, // 'HARVESTING' or 'RESTING'
+                index: await getKamiIndex(entityId)
+            });
+        }
+    }
+    
+    return matches;
+}
+```
+
 ---
 
 ## Getting Started
