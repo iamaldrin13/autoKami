@@ -29,7 +29,7 @@ app.use(express.json());
 app.use((req, res, next) => {
   res.setHeader(
     'Content-Security-Policy',
-    "default-src 'self'; font-src 'self' data:; img-src 'self' data: https:; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'self' https: wss:;"
+    "default-src 'self'; frame-src 'self' https://auth.privy.io https://verify.privy.io; font-src 'self' data:; img-src 'self' data: https:; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://auth.privy.io; style-src 'self' 'unsafe-inline'; connect-src 'self' https: wss:;"
   );
   next();
 });
@@ -45,8 +45,6 @@ app.get('/health', (req, res) => {
 // Routes
 app.use('/api/kami', kamiRoutes);
 import watchlistRoutes from './routes/watchlistRoutes.js';
-
-// ... (existing imports)
 
 app.use('/api/watchlist', watchlistRoutes);
 app.use('/api/account', accountRoutes);

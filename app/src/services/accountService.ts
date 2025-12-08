@@ -87,7 +87,7 @@ export async function getAccountById(accountId: string): Promise<any> {
             room: Number(account.room)
         };
     } catch (e) {
-        console.error(`Failed to fetch account ${accountId}:`, e);
+        // console.error(`Failed to fetch account ${accountId}:`, e); // Suppress expected errors for search
         return null;
     }
 }
