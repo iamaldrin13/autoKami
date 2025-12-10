@@ -78,7 +78,7 @@ app.use((req, res) => {
   res.status(404).json({ error: 'Route not found' });
 });
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`🚀 Kamigotchi API server running on port ${PORT}`);
   console.log(`📡 Health check: http://localhost:${PORT}/health`);
   
@@ -106,3 +106,6 @@ app.listen(PORT, () => {
   console.log(`   POST /api/kamigotchis/:id/harvest/stop`);
   console.log(`   POST /api/kamigotchis/:id/harvest/auto`);
 });
+
+// Increase server timeout to 10 minutes to handle slow blockchain transactions
+server.setTimeout(600000);

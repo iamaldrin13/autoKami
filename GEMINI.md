@@ -1326,6 +1326,43 @@ async function checkAccountActivity(targetAccountId: string, targetNodeIndex: nu
 }
 ```
 
+## Feature Research: Node Distance & Pathfinding Strategy
+
+### Goal
+Determine the distance and best route between two rooms (nodes) in the Kamigotchi world. This is crucial for:
+1.  **Watchlist Strategy**: Calculating how far away a tracked target is from your Kamis.
+2.  **Automation**: Optimizing movement paths to reach target harvesting nodes.
+
+### Data Source
+-   **File**: `mapping/room_connection_map.tsx`
+-   **Structure**: Graph where rooms are nodes and exits are directed edges.
+
+### Implementation Pattern
+
+**Utility**: `app/src/utils/roomPathfinding.ts`
+
+**Algorithm**: Breadth-First Search (BFS) for shortest unweighted path.
+
+**Usage**:
+```typescript
+import { findShortestPath } from '../utils/roomPathfinding';
+
+const startId = 72; // Hatch to Nowhere
+const targetId = 69; // Lotus Pool
+
+const result = findShortestPath(startId, targetId);
+// Returns:
+// {
+//   path: [72, 71, 70, 69],
+//   distance: 3,
+//   names: ["Hatch to Nowhere", "Shabby Deck", "Still Stream", "Lotus Pool"]
+// }
+```
+
+**Known Paths (Verified)**:
+-   **Hatch to Nowhere (72) → Lotus Pool (69)**: 3 Hops (`72 -> 71 -> 70 -> 69`).
+-   **Note**: Some nodes in the map data appear disconnected or have missing intermediate nodes (e.g., Node 1 points to 20, but 20 is not defined). Pathfinding logic handles this by returning `null` if no path exists.
+
 ---
 
 ## Getting Started

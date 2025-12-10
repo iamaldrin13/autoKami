@@ -9,11 +9,13 @@ const HarvestStartSystem = loadAbi('HarvestStartSystem.json');
 const HarvestStopSystem = loadAbi('HarvestStopSystem.json');
 const HarvestCollectSystem = loadAbi('HarvestCollectSystem.json');
 const DamageComponent = loadAbi('DamageComponent.json');
+const World = loadAbi('World.json');
 const SYSTEMS = loadIds('systems.json');
 const COMPONENTS = loadIds('components.json');
 
 const RPC_URL = process.env.RPC_URL || 'https://archival-jsonrpc-yominet-1.anvil.asia-southeast.initia.xyz';
 const GETTER_SYSTEM_ADDRESS = process.env.GETTER_SYSTEM_ADDRESS || '0x12C0989A259471D89D1bA1BB95043D64DAF97c19';
+const WORLD_ADDRESS = '0x2729174c265dbBd8416C6449E0E813E88f43D0E7';
 
 // Initialize provider
 const provider = new ethers.JsonRpcProvider(RPC_URL);
@@ -34,6 +36,78 @@ export interface HarvestResult {
   txHash?: string;
   harvestId?: string;
   error?: string;
+}
+
+// Helper to find HarvestID on-chain
+async function findHarvestIdOnChain(kamiId: string): Promise<string | undefined> {
+    try {
+        console.log(`[Harvest] 🕵️‍♀️ Attempting on-chain lookup for HarvestID (Kami #${kamiId})...`);
+        
+        const world = new ethers.Contract(WORLD_ADDRESS, World.abi, provider);
+        const componentsRegistryAddress = await world.components();
+        
+        // We can use any component ABI that has getEntitiesWithValue, IDOwnsKamiComponent is fine
+        const registryAbi = loadAbi('IDOwnsKamiComponent.json').abi;
+        const componentsRegistry = new ethers.Contract(componentsRegistryAddress, registryAbi, provider);
+
+        const getAddr = async (encodedId: string) => {
+            const entities = await componentsRegistry.getFunction('getEntitiesWithValue(bytes)')(encodedId);
+            if (entities.length === 0) throw new Error(`Component not found: ${encodedId}`);
+            return ethers.getAddress('0x' + BigInt(entities[0]).toString(16).padStart(40, '0'));
+        };
+
+        // IDs from components.json
+        // TargetID (IdTargetComponent) maps Entity -> TargetEntityID
+        // StartTime (TimeStartComponent) indicates active process
+        // We need to check if we have the correct keys in components.json or use hardcoded if necessary.
+        // Based on file list, we have IdTargetComponent.json and TimeStartComponent.json.
+        // Assuming components.json keys are IdTargetComponent and TimeStartComponent.
+        
+        // Use keys that likely match the components.json structure or fallbacks from script if needed
+        // Script used specific hardcoded IDs. Let's try to look them up from COMPONENTS if possible, 
+        // else fallback to known IDs if we trust them.
+        // Actually, let's look up using the loaded COMPONENTS object for reliability if keys exist.
+        
+        const targetIdEncoded = (COMPONENTS as any).IdTargetComponent?.encodedID || '0x62e5c3a731a312a02bd0a6e08720624c014a22c9f60c82fede06a9606c505815';
+        const startTimeEncoded = (COMPONENTS as any).TimeStartComponent?.encodedID || '0x9ee42634d52dbd5a24ad226010389fb7306af59bdaec5e20547162dd896dacad';
+
+        const TargetIDAddr = await getAddr(targetIdEncoded);
+        const StartTimeAddr = await getAddr(startTimeEncoded);
+
+        const TargetID = new ethers.Contract(TargetIDAddr, [
+            "function getEntitiesWithValue(uint256 value) view returns (uint256[])"
+        ], provider);
+
+        const StartTime = new ethers.Contract(StartTimeAddr, [
+            "function has(uint256 entity) view returns (bool)"
+        ], provider);
+
+        // 1. Find all entities that target this Kami
+        // HarvestEntity -> targets -> KamiID
+        const entities = await TargetID.getEntitiesWithValue(BigInt(kamiId));
+        
+        if (entities.length === 0) {
+            console.log(`[Harvest] No entities target Kami #${kamiId}.`);
+            return undefined;
+        }
+
+        // 2. Check which one has a StartTime (is active)
+        for (const entityId of entities) {
+            const id = BigInt(entityId);
+            const isActive = await StartTime.has(id);
+            if (isActive) {
+                console.log(`[Harvest] 🎯 Found Active HarvestID on-chain: ${id}`);
+                return id.toString();
+            }
+        }
+        
+        console.log(`[Harvest] Found targeting entities but none are active.`);
+        return undefined;
+
+    } catch (e) {
+        console.error(`[Harvest] On-chain lookup failed:`, e);
+        return undefined;
+    }
 }
 
 export async function startHarvest(params: HarvestParams): Promise<HarvestResult> {
@@ -120,43 +194,43 @@ export async function stopHarvestByKamiId(kamiId: string, privateKey: string): P
             .eq('kami_entity_id', kamiId)
             .single();
             
-        if (kamiError || !kami) {
-             throw new Error(`Kamigotchi not found for entity ${kamiId}`);
-        }
-
-        // 2. Get Profile ID using Kamigotchi UUID
-        const { data: profile, error: profileError } = await supabase
-            .from('kami_profiles')
-            .select('id')
-            .eq('kamigotchi_id', kami.id)
-            .single();
-
-        if (profileError || !profile) {
-            console.error(`[Harvest] ❌ Profile lookup failed for Kami #${kamiId}:`, profileError);
-            throw new Error(`Could not find Kami Profile for entity ${kamiId}`);
-        }
-        console.log(`[Harvest] ✓ Found Profile ID: ${profile.id}`);
-
-        // 2. Get last auto_start or manual_start_harvest log
-        const { data: log, error: logError } = await supabase
-            .from('system_logs')
-            .select('metadata, created_at')
-            .eq('kami_profile_id', profile.id)
-            .in('action', ['auto_start', 'manual_start_harvest'])
-            .order('created_at', { ascending: false })
-            .limit(1)
-            .single();
-
         let harvestId: string | undefined;
-        if (log && log.metadata && (log.metadata as any).harvestId) {
-            harvestId = (log.metadata as any).harvestId;
-            console.log(`[Harvest] 🎯 Found Harvest ID: ${harvestId} (from log at ${log.created_at})`);
-        } else {
-            console.warn(`[Harvest] ⚠️ No 'auto_start' or 'manual_start_harvest' log found with harvestId for this profile.`);
+
+        // DB Lookup Path
+        if (!kamiError && kami) {
+            // 2. Get Profile ID using Kamigotchi UUID
+            const { data: profile } = await supabase
+                .from('kami_profiles')
+                .select('id')
+                .eq('kamigotchi_id', kami.id)
+                .single();
+
+            if (profile) {
+                // 3. Get last auto_start or manual_start_harvest log
+                const { data: log } = await supabase
+                    .from('system_logs')
+                    .select('metadata, created_at')
+                    .eq('kami_profile_id', profile.id)
+                    .in('action', ['auto_start', 'manual_start_harvest'])
+                    .order('created_at', { ascending: false })
+                    .limit(1)
+                    .single();
+
+                if (log && log.metadata && (log.metadata as any).harvestId) {
+                    harvestId = (log.metadata as any).harvestId;
+                    console.log(`[Harvest] 🎯 Found Harvest ID in DB: ${harvestId}`);
+                }
+            }
+        }
+
+        // Fallback: On-Chain Lookup
+        if (!harvestId) {
+            console.warn(`[Harvest] ⚠️ Harvest ID not found in DB. Trying on-chain lookup...`);
+            harvestId = await findHarvestIdOnChain(kamiId);
         }
 
         if (!harvestId) {
-            throw new Error('Could not find active Harvest ID in logs. Cannot stop harvest.');
+            throw new Error('Could not find active Harvest ID (checked DB and On-Chain). Cannot stop harvest.');
         }
 
         // Pass harvestId, not kamiId
