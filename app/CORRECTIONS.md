@@ -1,59 +1,24 @@
-# Corrections Applied
+# Corrections Log
 
-## 1. Node Names Mapping ✅
+## 2025-12-13: Fix Location Logic & Log Redundancy
 
-**Issue**: Node index 31 was not correctly mapped to "Scrapyard Exit"
+### Issue
+1. Logs contained redundant prefixes: `[Kami #10476] [Auto Harvest: Eerie] ...`.
+2. Automation failed with "Account is in Room #69, but target is Node #0" because unconfigured profiles defaulted to Node 0 instead of the current location.
 
-**Fix**: Updated `parseNodeNames()` to correctly parse the new format:
-- Format: `[nodeIndex, 'Node Name']` on each line
-- Maps by `nodeIndex` (the actual index from contract)
-- Example: `[31, 'Scrapyard Exit']` → nodeIndex 31 maps to "Scrapyard Exit"
+### Changes Applied
+1. **Frontend**: 
+   - Edited `app/frontend/src/components/CharacterManagerPWA.tsx`.
+   - Removed the conditional logic that prepended `[Kami #...]` to log messages in both the initial fetch and real-time subscription handlers.
 
-## 2. XP Calculation ✅
+2. **Backend**:
+   - Edited `app/src/services/automationService.ts`.
+   - Updated `checkKami` function (Rest restart block).
+   - Changed target node logic: `const nodeIndex = profile.harvest_node_index ?? account?.room ?? 0;`.
+   - This ensures if `harvest_node_index` is null (not set), it defaults to the account's current room, preventing false location errors.
+   - Also fixed a bug introduced in the previous step where `kamiData` was accessed before initialization.
 
-**Issue**: XP calculation was incorrect
-
-**Fix**: 
-- `currentXP`: The actual XP value from contract (e.g., 29737)
-- `nextLevelXP`: The XP required for next level (e.g., 63516)
-- `xpToNextLevel`: Calculated as `nextLevelXP - currentXP` (e.g., 63516 - 29737 = 33779)
-
-## 3. Stats Order ✅
-
-**Issue**: Stats array order comment was incorrect
-
-**Fix**: Updated comments to reflect correct order:
-- `[Power, HP, Violence, Harmony, Slot]`
-- Updated in both `TraitData` interface and `kamiService.ts`
-
-## 4. Affinities Mapping ✅
-
-**Issue**: Affinities were not correctly mapped from traits
-
-**Fix**: 
-- **SCRAP** = 1st affinity from **Body** trait type
-- **INSECT** = 2nd affinity from **Hands** trait type
-- Affinities array is now built from trait types:
-  ```typescript
-  if (bodyTrait && bodyTrait.type) {
-    affinities.push(bodyTrait.type); // 1st affinity
-  }
-  if (handTrait && handTrait.type) {
-    affinities.push(handTrait.type); // 2nd affinity
-  }
-  ```
-
-## Testing
-
-Run the test again to verify all corrections:
-
-```bash
-npm test
-```
-
-Expected results:
-- Node index 31 → "Scrapyard Exit" ✅
-- XP calculation: currentXP = actual XP, xpToNextLevel = nextLevelXP - currentXP ✅
-- Stats order documented correctly ✅
-- Affinities: [Body.type, Hands.type] ✅
-
+### Verification
+- `npm run build` passed.
+- Logs should now be clean: `[Auto Harvest: Eerie] ...`.
+- Automation should correctly restart harvest in the current room if no specific node is targeted.

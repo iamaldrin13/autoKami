@@ -219,7 +219,7 @@ async function processAutomation() {
         // 1. Fetch all enabled automation profiles
         const { data: profiles, error } = await supabase
             .from('kami_profiles')
-            .select('*, kamigotchis!inner(kami_entity_id, encrypted_private_key, user_id, kami_index, kami_name, account_id, room_name)')
+            .select('*, kamigotchis!inner(kami_entity_id, encrypted_private_key, user_id, kami_index, kami_name, account_id, room_name), operator_wallets(name)')
             .eq('auto_harvest_enabled', true);
 
         if (error) throw error;
@@ -251,12 +251,13 @@ async function checkKami(profile: any) {
     const kamiId = kami.kami_entity_id;
     const userId = kami.user_id;
     const strategy = profile.strategy_type || 'harvest_rest';
+    const walletName = profile.operator_wallets?.name || 'Unknown Wallet';
     
     // Format helpers
     const strategyLabel = strategy === 'harvest_feed' ? 'Harvest & Feed' : 'Harvest & Rest';
-    const kamiLabel = `Kami ${kami.kami_name || 'Unknown'} (#${kami.kami_index})`;
+    const kamiLabel = `Kami #${kami.kami_index}`;
     // Use stored room name if available, else Node index
-    const locationStr = kami.room_name ? `${kami.room_name}` : `Node #${profile.harvest_node_index ?? '?'}`;
+    const locationStr = `Node #${profile.harvest_node_index ?? kami.room_index ?? '?'}`;
 
     try {
         // Check on-chain status
@@ -273,7 +274,7 @@ async function checkKami(profile: any) {
                 kami_profile_id: profile.id,
                 action: 'state_sync',
                 status: 'info',
-                message: `[${strategyLabel}] : ${kamiLabel} at ${locationStr} - State mismatch corrected. On-chain: ${isHarvesting ? 'Harvesting' : 'Resting'}`
+                message: `[Auto Harvest: ${walletName}] State mismatch corrected for ${kamiLabel} at ${locationStr}. On-chain: ${isHarvesting ? 'Harvesting' : 'Resting'}`
             });
         }
 
@@ -365,7 +366,7 @@ async function checkKami(profile: any) {
                                         inventory = await getAccountInventory(kami.account_id);
                                         const newCount = inventory[itemId] || 0;
                                         
-                                        let msg = `[${strategyLabel}] : ${kamiLabel} fed successfully with ${itemName}. Remaining: ${newCount}.`;
+                                        let msg = `[Auto Harvest: ${walletName}] Feeding ${kamiLabel} with ${itemName} at ${locationStr}. Remaining: ${newCount}.`;
                                         let status: 'success' | 'warning' = 'success';
 
                                         if (newCount === 0) {
@@ -420,7 +421,7 @@ async function checkKami(profile: any) {
                                 kami_profile_id: profile.id,
                                 action: 'auto_feed_critical_stop',
                                 status: 'error',
-                                message: `[${strategyLabel}] : ${kamiLabel} - CRITICAL: Could not feed (Out of ${primaryItemName} or Tx Failed). Harvesting STOPPED to prevent death.`,
+                                message: `[Auto Harvest: ${walletName}] CRITICAL: Could not feed ${kamiLabel} (Out of ${primaryItemName} or Tx Failed). Harvesting STOPPED to prevent death.`,
                                 metadata: { txHash: stopResult.success ? stopResult.txHash : undefined, error: stopResult.error }
                             });
                             
@@ -447,7 +448,7 @@ async function checkKami(profile: any) {
                     kami_profile_id: profile.id,
                     action: 'low_health_stop',
                     status: 'warning',
-                    message: `[${strategyLabel}] : ${kamiLabel} at ${locationStr} - Health critically low (${currentHealth} / ${minHealth}). Emergency stop triggered.`
+                    message: `[Auto Harvest: ${walletName}] Health critically low for ${kamiLabel} at ${locationStr} (${currentHealth} / ${minHealth}). Emergency stop triggered.`
                 });
 
                 const privateKey = await decryptPrivateKey(kami.encrypted_private_key);
@@ -465,7 +466,7 @@ async function checkKami(profile: any) {
                         kami_profile_id: profile.id,
                         action: 'low_health_stop',
                         status: 'success',
-                        message: `[${strategyLabel}] : ${kamiLabel} - Emergency stop successful due to low health (${currentHealth} HP). Resting started.`,
+                        message: `[Auto Harvest: ${walletName}] Emergency stop successful for ${kamiLabel} due to low health (${currentHealth} HP). Resting started.`,
                         metadata: { txHash: result.txHash, currentHealth }
                     });
                     return; // Skip duration check if stopped
@@ -491,7 +492,7 @@ async function checkKami(profile: any) {
                             kami_profile_id: profile.id,
                             action: 'auto_stop',
                             status: 'info',
-                            message: `[${strategyLabel}] : ${kamiLabel} at ${locationStr} - Harvest time exceeded (${Math.floor(elapsed/60000)}m / ${profile.harvest_duration}m). Stopping harvest.`
+                            message: `[Auto Harvest: ${walletName}] Harvest time exceeded for ${kamiLabel} at ${locationStr} (${Math.floor(elapsed/60000)}m / ${profile.harvest_duration}m). Stopping harvest.`
                         });
 
                         const privateKey = await decryptPrivateKey(kami.encrypted_private_key);
@@ -509,7 +510,7 @@ async function checkKami(profile: any) {
                                 kami_profile_id: profile.id,
                                 action: 'auto_stop',
                                 status: 'success',
-                                message: `[${strategyLabel}] : ${kamiLabel} - Harvest stopped successfully. Entering rest mode.`,
+                                message: `[Auto Harvest: ${walletName}] Resting started for ${kamiLabel} at ${locationStr}.`,
                                 metadata: { txHash: result.txHash }
                             });
                         } else {
@@ -535,7 +536,14 @@ async function checkKami(profile: any) {
                 if (profile.auto_restart_enabled) {
                     console.log(`[Automation] Kami #${kami.kami_index}: Rest time exceeded (${Math.floor(elapsed/60000)}m). Starting...`);
                     
-                    const nodeIndex = profile.harvest_node_index || 0; 
+                    // 1. Fetch Data
+                    const kamiData = await getKamiById(kamiId);
+                    const currentRoom = kamiData.room.index;
+                    const account = await getAccountById(kamiData.account);
+
+                    // 2. Determine Target Node
+                    // Priority: Configured > Current Location > Default 0
+                    const nodeIndex = profile.harvest_node_index ?? account?.room ?? 0;
 
                     await logSystemEvent({
                         user_id: userId,
@@ -543,18 +551,12 @@ async function checkKami(profile: any) {
                         kami_profile_id: profile.id,
                         action: 'auto_start',
                         status: 'info',
-                        message: `[${strategyLabel}] : ${kamiLabel} - Rest duration exceeded (${Math.floor(elapsed/60000)}m / ${profile.rest_duration}m). Starting harvest at ${locationStr}.`
+                        message: `[Auto Harvest: ${walletName}] Rest duration exceeded (${Math.floor(elapsed/60000)}m / ${profile.rest_duration}m). Starting harvest at Node #${nodeIndex}.`
                     });
 
                     const privateKey = await decryptPrivateKey(kami.encrypted_private_key);
-                    // Use configured node or default to 0
                     
-                    // --- Location Check & Move ---
-                    const kamiData = await getKamiById(kamiId);
-                    const currentRoom = kamiData.room.index;
-                    
-                    // Check Account Location
-                    const account = await getAccountById(kamiData.account);
+                    // 3. Check Account Location
                     if (account && account.room !== nodeIndex) {
                         const msg = `Automation stopped: Account is in Room #${account.room}, but target is Node #${nodeIndex}. Please move manually.`;
                         console.warn(`[Automation] 🛑 ${msg}`);
@@ -565,7 +567,7 @@ async function checkKami(profile: any) {
                             kami_profile_id: profile.id,
                             action: 'automation_stopped',
                             status: 'error',
-                            message: `[${strategyLabel}] : ${kamiLabel} - ${msg}`,
+                            message: `[Auto Harvest: ${walletName}] Automation stopped for ${kamiLabel} - ${msg}`,
                             metadata: { currentRoom: account.room, targetNode: nodeIndex }
                         });
                         return; // Stop processing for this Kami
@@ -616,7 +618,7 @@ async function checkKami(profile: any) {
                             kami_profile_id: profile.id,
                             action: 'auto_start',
                             status: 'success',
-                            message: `[${strategyLabel}] : ${kamiLabel} - Harvest started successfully at ${locationStr} (Harvest ID: ${result.harvestId || '?'}).`,
+                            message: `[Auto Harvest: ${walletName}] Harvesting started for ${kamiLabel} at ${locationStr} (Harvest ID: ${result.harvestId || '?'}).`,
                             metadata: { txHash: result.txHash, harvestId: result.harvestId }
                         });
                     } else {
@@ -643,7 +645,7 @@ async function checkKami(profile: any) {
                 kami_profile_id: profile.id,
                 action: 'automation_stopped_critical',
                 status: 'error',
-                message: `[${strategyLabel}] : ${kamiLabel} - CRITICAL: Active Harvest ID lost (likely started manually before update). Automation DISABLED. Please STOP harvest manually via game UI to reset state.`,
+                message: `[Auto Harvest: ${walletName}] CRITICAL for ${kamiLabel} - Active Harvest ID lost. Automation DISABLED. Please STOP manually.`,
                 metadata: { error: errorMsg }
             });
             return;
@@ -655,7 +657,7 @@ async function checkKami(profile: any) {
             kami_profile_id: profile.id,
             action: 'automation_error',
             status: 'error',
-            message: `[${strategyLabel}] : ${kamiLabel} - Automation failed: ${errorMsg}`,
+            message: `[Auto Harvest: ${walletName}] Automation failed for ${kamiLabel}: ${errorMsg}`,
             metadata: { error: errorMsg }
         });
     }

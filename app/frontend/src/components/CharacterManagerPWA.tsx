@@ -243,7 +243,10 @@ const StatusTimer = ({ char }: { char: Kami }) => {
       
       setStrategyLabel(strategy === 'harvest_feed' ? 'Harvest & Feed' : 'Harvest & Rest');
 
-      if (char.running) {
+      // Use backend state 'isCurrentlyHarvesting' for timer logic, NOT 'running' (which is automation enabled pref)
+      const isHarvestingState = char.automation?.isCurrentlyHarvesting;
+
+      if (isHarvestingState) {
           if (strategy === 'harvest_feed') {
               // --- Harvest & Feed Strategy ---
               // Countdown to next feed
@@ -775,58 +778,74 @@ const CharacterManagerPWA = () => {
   }, [authenticated, user, refreshKey, isSettingsModalOpen]);
 
   // Fetch kamigotchis and system logs
-  useEffect(() => {
-    const fetchData = async () => {
-      if (!authenticated || !user || profiles.length === 0) return;
+  const fetchData = useCallback(async (isSilent = false) => {
+    if (!authenticated || !user || profiles.length === 0) return;
+    
+    if (!isSilent) setLoading(true);
+    try {
+      const currentProfile = profiles[currentProfileIndex];
       
-      setLoading(true);
-      try {
-        const currentProfile = profiles[currentProfileIndex];
-        
-        const { kamigotchis } = await getKamigotchis(user.id, currentProfile.id);
-        
-        const mappedCharacters: Kami[] = kamigotchis
-          .map((k: any) => ({
-            id: k.id,
-            kami_index: k.index,
-            name: k.name || `Kami #${k.index}`,
-            level: k.level,
-            mediaUri: k.mediaURI || k.index.toString(),
-            running: k.automation?.autoHarvestEnabled || false,
-            entity_id: k.entityId,
-            operator_wallet_id: k.operator_wallet_id,
-            finalStats: k.finalStats || { health: 0, power: 0, harmony: 0, violence: 0 },
-            currentHealth: k.currentHealth,
-            affinities: k.affinities || [],
-            automation: k.automation,
-            room: k.room || { index: 0, name: 'Unknown' }
-          }));
+      const { kamigotchis } = await getKamigotchis(user.id, currentProfile.id);
+      
+      const mappedCharacters: Kami[] = kamigotchis
+        .map((k: any) => ({
+          id: k.id,
+          kami_index: k.index,
+          name: k.name || `Kami #${k.index}`,
+          level: k.level,
+          mediaUri: k.mediaURI || k.index.toString(),
+          running: k.automation?.autoHarvestEnabled || false,
+          entity_id: k.entityId,
+          operator_wallet_id: k.operator_wallet_id,
+          finalStats: k.finalStats || { health: 0, power: 0, harmony: 0, violence: 0 },
+          currentHealth: k.currentHealth,
+          affinities: k.affinities || [],
+          automation: k.automation,
+          room: k.room || { index: 0, name: 'Unknown' }
+        }));
 
-        setCharacters(mappedCharacters);
-        
-        if (selectedChar) {
-          const updatedSelected = mappedCharacters.find(c => c.id === selectedChar.id);
-          if (updatedSelected) setSelectedChar(updatedSelected);
-        }
+      setCharacters(mappedCharacters);
+      
+      // Update selected char if it exists, using functional update to avoid dependency on selectedChar
+      setSelectedChar(prevSelected => {
+        if (!prevSelected) return null;
+        const updatedSelected = mappedCharacters.find(c => c.id === prevSelected.id);
+        return updatedSelected || prevSelected;
+      });
 
-        const { logs } = await getSystemLogs(user.id);
-        setSystemLogs(logs.map((log: any) => ({
-          id: log.id,
-          time: new Date(log.created_at).toLocaleTimeString('en-US', { hour12: false }),
-          message: (log.kami_index !== undefined && log.kami_index !== null) ? `[Kami #${log.kami_index}] ${log.message}` : log.message,
-          type: (log.status === 'error' ? 'error' : 'success') as 'error' | 'success',
-          kami_index: log.kami_index
-        })));
+      const { logs } = await getSystemLogs(user.id);
+      setSystemLogs(logs.map((log: any) => ({
+        id: log.id,
+        time: new Date(log.created_at).toLocaleTimeString('en-US', { hour12: false }),
+        message: log.message,
+        type: (log.status === 'error' ? 'error' : 'success') as 'error' | 'success',
+        kami_index: log.kami_index
+      })));
 
-      } catch (error) {
-        console.error('Error fetching data:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
+    } catch (error) {
+      console.error('Error fetching data:', error);
+    } finally {
+      if (!isSilent) setLoading(false);
+    }
+  }, [authenticated, user, profiles, currentProfileIndex]);
 
-    fetchData();
-  }, [authenticated, user, profiles, currentProfileIndex, refreshKey]);
+  // Initial Fetch & Refresh Key trigger
+  useEffect(() => {
+    fetchData(false);
+  }, [fetchData, refreshKey]);
+
+  // Polling Interval (every 15s)
+  useEffect(() => {
+      if (!authenticated) return;
+      
+      const interval = setInterval(() => {
+          if (document.visibilityState === 'visible') {
+              fetchData(true); // Silent refresh
+          }
+      }, 15000);
+      
+      return () => clearInterval(interval);
+  }, [fetchData, authenticated]);
 
   // Real-time Log Subscription
   useEffect(() => {
@@ -850,7 +869,7 @@ const CharacterManagerPWA = () => {
           setSystemLogs(prev => [{
             id: newLog.id,
             time: new Date(newLog.created_at).toLocaleTimeString('en-US', { hour12: false }),
-            message: (newLog.kami_index !== undefined && newLog.kami_index !== null) ? `[Kami #${newLog.kami_index}] ${newLog.message}` : newLog.message,
+            message: newLog.message,
             type: (newLog.status === 'error' ? 'error' : newLog.status === 'warning' ? 'warning' : 'success') as 'error' | 'warning' | 'success',
             kami_index: newLog.kami_index
           }, ...prev].slice(0, 50));
