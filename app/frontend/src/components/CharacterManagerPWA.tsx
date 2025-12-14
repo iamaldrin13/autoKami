@@ -139,6 +139,15 @@ interface SystemLog {
   kami_index?: number;
 }
 
+interface LiveWatchlistKami {
+  id: string; // kamiEntityId
+  name: string;
+  state: string; // e.g., 'Harvesting', 'Resting'
+  room: number; // room index directly (as used in findShortestPath)
+  mediaURI?: string; // Optional, might not always be returned by live status
+  accountId: string; // The account ID this kami belongs to
+}
+
 interface OperatorWallet {
   id: string;
   name: string;
@@ -557,7 +566,7 @@ const CharacterManagerPWA = () => {
   // Watchlist State
   const [isWatchlistModalOpen, setIsWatchlistModalOpen] = useState(false);
   const [watchlist, setWatchlist] = useState<WatchlistItem[]>([]);
-  const [watchlistLiveStatus, setWatchlistLiveStatus] = useState<Record<string, any[]> | null>(null);
+  const [watchlistLiveStatus, setWatchlistLiveStatus] = useState<Record<string, LiveWatchlistKami[]> | null>(null);
   const [loadingWatchlistLive, setLoadingWatchlistLive] = useState(false);
   const [watchlistSearchQuery, setWatchlistSearchQuery] = useState('');
   const [watchlistSearchResults, setWatchlistSearchResults] = useState<any[]>([]);
@@ -571,7 +580,7 @@ const CharacterManagerPWA = () => {
     setLoadingWatchlistLive(true);
     try {
         const liveData = await getWatchlistLive(user.id);
-        setWatchlistLiveStatus(liveData);
+        setWatchlistLiveStatus(liveData as Record<string, LiveWatchlistKami[]>);
 
         // Calculate distances to determine next refresh interval
         let globalMinDistance = Infinity;
@@ -1595,92 +1604,101 @@ const CharacterManagerPWA = () => {
                     </button>
                 </div>
                 <div className="p-2 h-full overflow-y-auto space-y-2">
-                    {watchlist.length === 0 ? (
-                        <div className="text-center opacity-50 p-4">
-                            <p className="text-sm font-bold">Empty</p>
-                            <p className="text-xs">Add from modal</p>
-                        </div>
-                    ) : (
-                        (() => {
-                            // Group by Account
-                            const uniqueAccounts = new Map<string, string>();
-                            watchlist.forEach(item => uniqueAccounts.set(item.accountId, item.accountName || 'Unknown'));
-
-                            return Array.from(uniqueAccounts.entries()).map(([accountId, accountName]) => {
-                                const liveKamis = watchlistLiveStatus?.[accountId] || [];
-                                
-                                // Group live kamis by location
-                                const locationGroups = new Map<number, number>();
-                                liveKamis.forEach(k => {
-                                    if (k.room) locationGroups.set(k.room, (locationGroups.get(k.room) || 0) + 1);
-                                });
-
-                                if (locationGroups.size === 0) {
-                                    return (
-                                        <div key={accountId} className={`${currentTheme === 'arcade' ? 'bg-gray-100 border-2 border-gray-200' : 'bg-black/10 border border-white/20'} p-2 rounded text-xs opacity-60`}>
-                                            <div className="font-bold">{accountName}</div>
-                                            <div className="text-[10px] italic">Offline / No active kamis</div>
-                                        </div>
-                                    );
-                                }
-
-                                return Array.from(locationGroups.entries()).map(([roomId, count]) => {
-                                    // Calculate distances for MY characters
-                                    // Prioritize: Running > Selected > Closest
-                                    const myDistances = characters
-                                        .filter(c => c.room)
-                                        .map(c => {
-                                            const path = findShortestPath(c.room.index, roomId);
-                                            return {
-                                                id: c.id,
-                                                name: c.name,
-                                                isRunning: c.running,
-                                                distance: path ? path.distance : Infinity
-                                            };
-                                        })
-                                        .sort((a, b) => {
-                                            // Sort by distance
-                                            return a.distance - b.distance;
-                                        })
-                                        .slice(0, 5); // Show top 5 closest
-
-                                    return (
-                                        <div key={`${accountId}-${roomId}`} className={`${currentTheme === 'arcade' ? 'bg-white border-2 border-gray-300' : 'bg-black/20 border border-white/20'} rounded text-xs overflow-hidden`}>
-                                            {/* Header: Target Account & Location */}
-                                            <div className="bg-gray-800 text-white p-1.5 flex justify-between items-center">
-                                                <span className="font-bold truncate max-w-[80px]" title={accountName}>{accountName}</span>
-                                                <div className="text-right">
-                                                    <div className="text-yellow-400 font-bold max-w-[100px] truncate">
-                                                        {NODE_LIST.find(n => n.id === roomId)?.name || `Node ${roomId}`}
+                                {watchlist.length === 0 && !watchlistLiveStatus ? (
+                                    <div className="text-center opacity-50 p-4">
+                                        <p className="text-sm font-bold">Empty</p>
+                                        <p className="text-xs">Add from modal</p>
+                                    </div>
+                                ) : (
+                                    <div className="space-y-2">
+                                        {(() => {
+                                            const allLiveWatchlistKamis: LiveWatchlistKami[] = watchlistLiveStatus
+                                                ? Object.values(watchlistLiveStatus).flat()
+                                                : [];
+                    
+                                            // Filter to only show Kamis that are actually in the user's watchlist
+                                            // And sort them by their Kami Index for consistent display
+                                            const displayedKamis = watchlist
+                                                .map(watchedItem => {
+                                                    const liveKami = allLiveWatchlistKamis.find(lk => lk.id === watchedItem.kamiEntityId);
+                                                    return liveKami ? { ...liveKami, accountName: watchedItem.accountName } : null;
+                                                })
+                                                .filter((k): k is LiveWatchlistKami & { accountName?: string } => k !== null)
+                                                .sort((a, b) => {
+                                                    const kamiIndexA = parseInt(a.name.replace('Kami #', ''));
+                                                    const kamiIndexB = parseInt(b.name.replace('Kami #', ''));
+                                                    return kamiIndexA - kamiIndexB;
+                                                });
+                    
+                                            if (displayedKamis.length === 0) {
+                                                return (
+                                                    <div className="text-center opacity-50 p-4">
+                                                        <p className="text-sm font-bold">No active watched Kamis</p>
+                                                        <p className="text-xs">Add from modal or they might be offline</p>
                                                     </div>
-                                                    <div className="text-[9px] text-gray-400">{count} kamis here</div>
-                                                </div>
-                                            </div>
-
-                                            {/* My Relative Distances */}
-                                            <div className="p-1.5 space-y-1">
-                                                {myDistances.map(d => (
-                                                    <div key={d.id} className="flex justify-between items-center text-[10px] border-b border-gray-100/10 last:border-0 pb-0.5 last:pb-0 gap-2">
-                                                        <span className={`truncate flex-1 min-w-0 ${d.isRunning ? 'text-green-600 font-bold' : ''}`} title={d.name}>
-                                                            {d.name}
-                                                        </span>
-                                                        <span className={`font-mono font-bold flex-shrink-0 ${
-                                                            d.distance === 0 ? 'text-red-500 animate-pulse' : 
-                                                            d.distance < 3 ? 'text-yellow-600' : 
-                                                            'text-gray-400'
-                                                        }`}>
-                                                            {d.distance === 0 ? 'HERE!!' : `${d.distance} hops`}
-                                                        </span>
+                                                );
+                                            }
+                    
+                                            return displayedKamis.map(targetKami => {
+                                                const myDistances = characters
+                                                    .filter(c => c.room)
+                                                    .map(c => {
+                                                        const path = findShortestPath(c.room.index, targetKami.room);
+                                                        return {
+                                                            id: c.id,
+                                                            name: c.name,
+                                                            isRunning: c.running,
+                                                            distance: path ? path.distance : Infinity
+                                                        };
+                                                    })
+                                                    .sort((a, b) => a.distance - b.distance)
+                                                    .slice(0, 3); // Show top 3 closest
+                    
+                                                return (
+                                                    <div key={targetKami.id} className={`${currentTheme === 'arcade' ? 'bg-white border-2 border-gray-300' : 'bg-black/20 border border-white/20'} rounded text-xs overflow-hidden`}>
+                                                        {/* Header */}
+                                                        <div className="bg-gray-800 text-white p-1.5 flex justify-between items-center">
+                                                            <div className="flex items-center gap-2">
+                                                                <div className={`w-2 h-2 rounded-full ${targetKami.state === 'Harvesting' ? 'bg-green-500 animate-pulse' : 'bg-yellow-500'}`}></div>
+                                                                <span className="font-bold text-sm text-white">{targetKami.name}</span>
+                                                                <span className="text-xs text-gray-400">({targetKami.accountName || 'Unknown'})</span>
+                                                            </div>
+                                                            <div className="text-right">
+                                                                <div className="text-yellow-400 font-bold text-xs">
+                                                                    {NODE_LIST.find(n => n.id === targetKami.room)?.name || `Node ${targetKami.room}`}
+                                                                </div>
+                                                                <div className="text-[10px] text-gray-400 uppercase">{targetKami.state}</div>
+                                                            </div>
+                                                        </div>
+                    
+                                                        {/* My Relative Distances */}
+                                                        <div className="p-1.5 space-y-1">
+                                                            <div className="text-[9px] text-gray-500 font-bold uppercase">Distance from my kamis:</div>
+                                                            {myDistances.length === 0 ? (
+                                                                <div className="text-[10px] text-gray-500 italic">No active kamis to compare</div>
+                                                            ) : (
+                                                                myDistances.map(d => (
+                                                                    <div key={d.id} className="flex justify-between items-center text-[10px] border-b border-gray-100/10 last:border-0 pb-0.5 last:pb-0 gap-2">
+                                                                        <span className={`truncate flex-1 min-w-0 ${d.isRunning ? 'text-green-600 font-bold' : ''}`} title={d.name}>
+                                                                            {d.name}
+                                                                        </span>
+                                                                        <span className={`font-mono font-bold flex-shrink-0 ${
+                                                                            d.distance === 0 ? 'text-red-500 animate-pulse' :
+                                                                            d.distance < 3 ? 'text-yellow-600' :
+                                                                            'text-gray-400'
+                                                                        }`}>
+                                                                            {d.distance === 0 ? 'HERE!!' : d.distance === Infinity ? 'Unknown' : `${d.distance} hops`}
+                                                                        </span>
+                                                                    </div>
+                                                                ))
+                                                            )}
+                                                        </div>
                                                     </div>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    );
-                                });
-                            });
-                        })()
-                    )}
-                </div>
+                                                );
+                                            });
+                                        })()}
+                                    </div>
+                                )                </div>
             </div>
           </div>
         </div>
@@ -1783,122 +1801,98 @@ const CharacterManagerPWA = () => {
                         </button>
                     </div>
                     
-                    {watchlist.length === 0 ? (
+                    {watchlist.length === 0 && !watchlistLiveStatus ? (
                         <div className="text-gray-500 text-center p-4">No items in watchlist</div>
                     ) : (
                         <div className="grid gap-3">
                             {(() => {
-                                // Group by Account to show logical blocks
-                                const uniqueAccounts = new Map<string, string>();
-                                watchlist.forEach(item => uniqueAccounts.set(item.accountId, item.accountName || 'Unknown'));
+                                const allLiveWatchlistKamis: LiveWatchlistKami[] = watchlistLiveStatus
+                                    ? Object.values(watchlistLiveStatus).flat()
+                                    : [];
 
-                                return Array.from(uniqueAccounts.entries()).map(([accountId, accountName]) => {
-                                    const liveKamis = watchlistLiveStatus?.[accountId] || [];
-                                    
-                                    // Filter live kamis to only those in the watchlist (if we added specific kamis)
-                                    // Logic: If user added specific Kami ID, show only that. If added Account (not yet supported but future proof), show all.
-                                    // Currently we add specific Kamis.
-                                    const watchedKamiIds = new Set(watchlist.filter(w => w.accountId === accountId).map(w => w.kamiEntityId));
-                                    
-                                    // If we haven't fetched live data yet, just show placeholder items
-                                    if (!watchlistLiveStatus) {
-                                        return (
-                                            <div key={accountId} className="p-3 bg-gray-800 rounded border border-gray-700 opacity-50">
-                                                <div className="font-bold mb-2">{accountName}</div>
-                                                <div className="text-xs">Loading status...</div>
-                                            </div>
-                                        );
-                                    }
-
-                                    const visibleKamis = liveKamis.filter(k => watchedKamiIds.has(k.id));
-
-                                    if (visibleKamis.length === 0) {
-                                        return (
-                                             <div key={accountId} className="p-3 bg-gray-800 rounded border border-gray-700 opacity-50">
-                                                <div className="font-bold">{accountName}</div>
-                                                <div className="text-xs italic">Offline / No active watched kamis</div>
-                                            </div>
-                                        );
-                                    }
-
-                                    return visibleKamis.map(targetKami => {
-                                        // Calculate distances for MY characters
-                                        // Use the data already computed in backend or frontend logic
-                                        // Wait, backend provides `distance` now?
-                                        // Backend `GET /live` returns `results` where each kami has `distance` (min hops to ANY of my kamis) and `path`.
-                                        // But the UI wants a LIST of my kamis and their distance.
-                                        // The backend response I implemented only gives the MIN distance to the CLOSEST of my kamis.
-                                        // "Calculate minimum distance to any of user's kamis ... return { distance: minDistance }"
-                                        // The UI request: "show the add kamis of the user ... then the distance from my accounts per profile."
-                                        // This implies showing the LIST of my kamis.
-                                        // So I must calculate this on the Frontend using `findShortestPath` as I did in the "Right Panel" implementation.
-                                        
-                                        // Re-use logic from Right Panel
-                                        const myDistances = characters
-                                            .filter(c => c.room)
-                                            .map(c => {
-                                                const path = targetKami.room ? findShortestPath(c.room.index, targetKami.room) : null;
-                                                return {
-                                                    id: c.id,
-                                                    name: c.name,
-                                                    isRunning: c.running,
-                                                    distance: path ? path.distance : Infinity
-                                                };
-                                            })
-                                            .sort((a, b) => a.distance - b.distance)
-                                            .slice(0, 5); // Show top 5
-
-                                        return (
-                                            <div key={targetKami.id} className="bg-gray-800 border-2 border-gray-700 rounded overflow-hidden">
-                                                {/* Header */}
-                                                <div className="bg-gray-700 p-2 flex justify-between items-center">
-                                                    <div className="flex items-center gap-2">
-                                                        <div className={`w-2 h-2 rounded-full ${targetKami.state === 'Harvesting' ? 'bg-green-500 animate-pulse' : 'bg-yellow-500'}`}></div>
-                                                        <span className="font-bold text-sm text-white">{targetKami.name}</span>
-                                                        <span className="text-xs text-gray-400">({accountName})</span>
-                                                    </div>
-                                                    <div className="flex items-center gap-2">
-                                                        <div className="text-right">
-                                                            <div className="text-yellow-400 font-bold text-xs">
-                                                                {NODE_LIST.find(n => n.id === targetKami.room)?.name || `Node ${targetKami.room}`}
-                                                            </div>
-                                                            <div className="text-[10px] text-gray-400 uppercase">{targetKami.state}</div>
-                                                        </div>
-                                                        <button 
-                                                            onClick={() => removeFromWatchlist(user!.id, targetKami.id).then(() => setWatchlist(p => p.filter(x => x.kamiEntityId !== targetKami.id)))}
-                                                            className="text-red-400 hover:text-white bg-gray-800 hover:bg-red-600 rounded p-1 ml-2 transition-colors"
-                                                            title="Remove from Watchlist"
-                                                        >
-                                                            <Trash2 className="w-4 h-4" />
-                                                        </button>
-                                                    </div>
-                                                </div>
-
-                                                {/* Distances Body */}
-                                                <div className="p-2 bg-gray-900/50 space-y-1">
-                                                    <div className="text-[10px] text-gray-500 font-bold uppercase mb-1">Distance from my kamis</div>
-                                                    {myDistances.length === 0 ? (
-                                                        <div className="text-xs text-gray-500 italic">You have no active kamis</div>
-                                                    ) : (
-                                                        myDistances.map(d => (
-                                                            <div key={d.id} className="flex justify-between items-center text-xs border-b border-gray-700/50 last:border-0 pb-1 last:pb-0 gap-2">
-                                                                <span className={`truncate flex-1 min-w-0 ${d.isRunning ? 'text-green-400' : 'text-gray-300'}`} title={d.name}>
-                                                                    {d.name}
-                                                                </span>
-                                                                <span className={`font-mono font-bold flex-shrink-0 ${
-                                                                    d.distance === 0 ? 'text-red-500 animate-pulse' : 
-                                                                    d.distance < 3 ? 'text-yellow-500' : 
-                                                                    'text-gray-500'
-                                                                }`}>
-                                                                    {d.distance === 0 ? 'HERE!!' : d.distance === Infinity ? 'Unknown' : `${d.distance} hops`}
-                                                                </span>
-                                                            </div>
-                                                        ))
-                                                    )}
-                                                </div>
-                                            </div>
-                                        );
+                                const displayedKamis = watchlist
+                                    .map(watchedItem => {
+                                        const liveKami = allLiveWatchlistKamis.find(lk => lk.id === watchedItem.kamiEntityId);
+                                        return liveKami ? { ...liveKami, accountName: watchedItem.accountName } : null;
+                                    })
+                                    .filter((k): k is LiveWatchlistKami & { accountName?: string } => k !== null)
+                                    .sort((a, b) => {
+                                        const kamiIndexA = parseInt(a.name.replace('Kami #', ''));
+                                        const kamiIndexB = parseInt(b.name.replace('Kami #', ''));
+                                        return kamiIndexA - kamiIndexB;
                                     });
+
+                                if (displayedKamis.length === 0) {
+                                    return (
+                                        <div className="text-gray-500 text-center p-4">No active watched Kamis</div>
+                                    );
+                                }
+
+                                return displayedKamis.map(targetKami => {
+                                    const myDistances = characters
+                                        .filter(c => c.room)
+                                        .map(c => {
+                                            const path = findShortestPath(c.room.index, targetKami.room);
+                                            return {
+                                                id: c.id,
+                                                name: c.name,
+                                                isRunning: c.running,
+                                                distance: path ? path.distance : Infinity
+                                            };
+                                        })
+                                        .sort((a, b) => a.distance - b.distance)
+                                        .slice(0, 3); // Show top 3 closest
+
+                                    return (
+                                        <div key={targetKami.id} className="bg-gray-800 border-2 border-gray-700 rounded overflow-hidden">
+                                            {/* Header */}
+                                            <div className="bg-gray-700 p-2 flex justify-between items-center">
+                                                <div className="flex items-center gap-2">
+                                                    <div className={`w-2 h-2 rounded-full ${targetKami.state === 'Harvesting' ? 'bg-green-500 animate-pulse' : 'bg-yellow-500'}`}></div>
+                                                    <span className="font-bold text-sm text-white">{targetKami.name}</span>
+                                                    <span className="text-xs text-gray-400">({targetKami.accountName})</span>
+                                                </div>
+                                                <div className="flex items-center gap-2">
+                                                    <div className="text-right">
+                                                        <div className="text-yellow-400 font-bold text-xs">
+                                                            {NODE_LIST.find(n => n.id === targetKami.room)?.name || `Node ${targetKami.room}`}
+                                                        </div>
+                                                        <div className="text-[10px] text-gray-400 uppercase">{targetKami.state}</div>
+                                                    </div>
+                                                    <button 
+                                                        onClick={() => removeFromWatchlist(user!.id, targetKami.id).then(() => setWatchlist(p => p.filter(x => x.kamiEntityId !== targetKami.id)))}
+                                                        className="text-red-400 hover:text-white bg-gray-800 hover:bg-red-600 rounded p-1 ml-2 transition-colors"
+                                                        title="Remove from Watchlist"
+                                                    >
+                                                        <Trash2 className="w-4 h-4" />
+                                                    </button>
+                                                </div>
+                                            </div>
+
+                                            {/* Distances Body */}
+                                            <div className="p-2 bg-gray-900/50 space-y-1">
+                                                <div className="text-[10px] text-gray-500 font-bold uppercase mb-1">Distance from my kamis</div>
+                                                {myDistances.length === 0 ? (
+                                                    <div className="text-xs text-gray-500 italic">You have no active kamis</div>
+                                                ) : (
+                                                    myDistances.map(d => (
+                                                        <div key={d.id} className="flex justify-between items-center text-xs border-b border-gray-700/50 last:border-0 pb-1 last:pb-0 gap-2">
+                                                            <span className={`truncate flex-1 min-w-0 ${d.isRunning ? 'text-green-400' : 'text-gray-300'}`} title={d.name}>
+                                                                {d.name}
+                                                            </span>
+                                                            <span className={`font-mono font-bold flex-shrink-0 ${
+                                                                d.distance === 0 ? 'text-red-500 animate-pulse' : 
+                                                                d.distance < 3 ? 'text-yellow-500' : 
+                                                                'text-gray-500'
+                                                            }`}>
+                                                                {d.distance === 0 ? 'HERE!!' : d.distance === Infinity ? 'Unknown' : `${d.distance} hops`}
+                                                            </span>
+                                                        </div>
+                                                    ))
+                                                )}
+                                            </div>
+                                        </div>
+                                    );
                                 });
                             })()}
                         </div>
