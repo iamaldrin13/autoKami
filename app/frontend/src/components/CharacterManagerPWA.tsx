@@ -1623,7 +1623,7 @@ const CharacterManagerPWA = () => {
                                                     const liveKami = allLiveWatchlistKamis.find(lk => lk.id === watchedItem.kamiEntityId);
                                                     return liveKami ? { ...liveKami, accountName: watchedItem.accountName } : null;
                                                 })
-                                                .filter((k): k is LiveWatchlistKami & { accountName?: string } => k !== null)
+                                                .filter((k): k is LiveWatchlistKami & { accountName: string | undefined } => k !== null)
                                                 .sort((a, b) => {
                                                     const kamiIndexA = parseInt(a.name.replace('Kami #', ''));
                                                     const kamiIndexB = parseInt(b.name.replace('Kami #', ''));
@@ -1698,7 +1698,8 @@ const CharacterManagerPWA = () => {
                                             });
                                         })()}
                                     </div>
-                                )                </div>
+                                )}
+                </div>
             </div>
           </div>
         </div>
@@ -1815,7 +1816,7 @@ const CharacterManagerPWA = () => {
                                         const liveKami = allLiveWatchlistKamis.find(lk => lk.id === watchedItem.kamiEntityId);
                                         return liveKami ? { ...liveKami, accountName: watchedItem.accountName } : null;
                                     })
-                                    .filter((k): k is LiveWatchlistKami & { accountName?: string } => k !== null)
+                                    .filter((k): k is LiveWatchlistKami & { accountName: string | undefined } => k !== null)
                                     .sort((a, b) => {
                                         const kamiIndexA = parseInt(a.name.replace('Kami #', ''));
                                         const kamiIndexB = parseInt(b.name.replace('Kami #', ''));

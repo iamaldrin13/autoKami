@@ -181,7 +181,8 @@ router.get('/', async (req: Request, res: Response) => {
                             feedItemId: profile.feed_item_id,
                             feedItemId2: profile.feed_item_id_2,
                             feedTriggerValue: profile.feed_trigger_value,
-                            feedIntervalMinutes: profile.feed_interval_minutes
+                            feedIntervalMinutes: profile.feed_interval_minutes,
+                            lastFeedAt: profile.last_feed_at
                         },
                         lastSynced: kami.last_synced
                     };

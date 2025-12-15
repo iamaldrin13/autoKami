@@ -13,7 +13,8 @@
     "test": "tsx src/test/kami-retrieval.test.ts",
     "test:account": "tsx src/test/account-kamis.test.ts",
     "test:harvest:start": "tsx src/test/testStartHarvest.ts",
-    "test:harvest:stop": "tsx src/test/testStopHarvest.ts"
+    "test:harvest:stop": "tsx src/test/testStopHarvest.ts",
+    "telegram:poll": "tsx src/scripts/start-telegram-polling.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.84.0",

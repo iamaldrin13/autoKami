@@ -1,0 +1,13 @@
+node_modules
+app/node_modules
+app/frontend/node_modules
+dist
+app/dist
+app/frontend/dist
+.git
+.vscode
+.idea
+*.log
+coverage
+tmp
+.DS_Store

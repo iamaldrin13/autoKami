@@ -11,6 +11,7 @@ import harvestRoutes from './routes/harvestRoutes.js';
 import profileRoutes from './routes/profileRoutes.js';
 import kamigotchiRoutes from './routes/kamigotchiRoutes.js';
 import systemRoutes from './routes/systemRoutes.js';
+import telegramRoutes from './routes/telegramRoutes.js';
 import { runAutomationLoop } from './services/automationService.js';
 
 dotenv.config();
@@ -43,6 +44,7 @@ app.get('/health', (req, res) => {
 });
 
 // Routes
+app.use('/api/telegram', telegramRoutes);
 app.use('/api/kami', kamiRoutes);
 import watchlistRoutes from './routes/watchlistRoutes.js';
 

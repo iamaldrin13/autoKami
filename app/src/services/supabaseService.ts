@@ -393,6 +393,21 @@ export async function getKamigotchiByEntityId(entityId: string): Promise<Kamigot
   return data;
 }
 
+export async function getKamigotchiByIndex(kamiIndex: number): Promise<Kamigotchi | null> {
+  const { data, error } = await supabase
+    .from('kamigotchis')
+    .select('*')
+    .eq('kami_index', kamiIndex)
+    .single();
+
+  if (error) {
+    if (error.code === 'PGRST116') return null;
+    throw error;
+  }
+
+  return data;
+}
+
 export async function deleteKamigotchi(kamiId: string): Promise<void> {
   const { error } = await supabase
     .from('kamigotchis')
