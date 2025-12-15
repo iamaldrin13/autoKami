@@ -307,41 +307,52 @@ export const getAccountStamina = async (accountId: string): Promise<number> => {
 };
 
 // Watchlist API
-export interface WatchlistItem {
-  id: string;
-  accountId: string;
-  accountName?: string;
-  kamiEntityId: string;
-  kamiName?: string;
-  createdAt: string;
+export interface KamiLocation {
+    id: string;
+    index: number;
+    name: string;
+    roomIndex: number;
+    roomName: string;
+    state: string;
 }
 
-export const getWatchlist = async (privyUserId: string): Promise<WatchlistItem[]> => {
+export interface WatchlistAccount {
+    accountId: string;
+    accountName: string;
+    accountRoomIndex: number;
+    kamis: KamiLocation[];
+}
+
+export interface WatchlistResult {
+    targetAccount: WatchlistAccount;
+    userAccounts: {
+        accountId: string;
+        distance: number | null;
+    }[];
+}
+
+export const getWatchlist = async (privyUserId: string): Promise<string[]> => {
   const response = await api.get('/watchlist', { params: { privyUserId } });
-  return response.data.items;
+  return response.data.watchlist;
 };
 
-export const getWatchlistLive = async (privyUserId: string): Promise<Record<string, any[]>> => {
+export const getWatchlistLive = async (privyUserId: string): Promise<WatchlistResult[]> => {
   const response = await api.get('/watchlist/live', { params: { privyUserId } });
-  return response.data.results;
+  return response.data.data;
 };
 
-export const addToWatchlist = async (
-  privyUserId: string, 
-  data: { accountId: string; accountName?: string; kamiEntityId: string; kamiName?: string }
-): Promise<WatchlistItem> => {
-  const response = await api.post('/watchlist', { ...data, privyUserId });
-  return response.data.item;
+export const addToWatchlist = async (privyUserId: string, targetAccountId: string): Promise<void> => {
+  await api.post('/watchlist', { privyUserId, targetAccountId });
 };
 
-export const removeFromWatchlist = async (privyUserId: string, kamiEntityId: string): Promise<{ success: boolean }> => {
-  const response = await api.delete(`/watchlist/${kamiEntityId}`, { params: { privyUserId } });
-  return response.data;
+export const removeFromWatchlist = async (privyUserId: string, targetAccountId: string): Promise<void> => {
+  await api.delete(`/watchlist/${targetAccountId}`, { params: { privyUserId } });
 };
 
 export const searchAccount = async (query: string): Promise<any> => {
-  const response = await api.get('/watchlist/search', { params: { query } });
-  return response.data.account;
+  // Direct account lookup by ID
+  const response = await api.get(`/account/${query}`);
+  return response.data;
 };
 
 export const getKamisByAccount = async (accountId: string): Promise<any[]> => {

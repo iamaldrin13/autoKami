@@ -542,25 +542,15 @@ async function checkKami(profile: any) {
                     const account = await getAccountById(kamiData.account);
 
                     // 2. Determine Target Node
-                    // Priority: Configured > Current Location > Default 0
-                    const nodeIndex = profile.harvest_node_index ?? account?.room ?? 0;
+                    let nodeIndex = profile.harvest_node_index;
+                    if (nodeIndex === null || nodeIndex === undefined || nodeIndex === 0) {
+                        nodeIndex = account?.room ?? 0;
+                    }
 
-                    await logSystemEvent({
-                        user_id: userId,
-                        kami_index: kami.kami_index,
-                        kami_profile_id: profile.id,
-                        action: 'auto_start',
-                        status: 'info',
-                        message: `[Auto Harvest: ${walletName}] Rest duration exceeded (${Math.floor(elapsed/60000)}m / ${profile.rest_duration}m). Starting harvest at Node #${nodeIndex}.`
-                    });
-
-                    const privateKey = await decryptPrivateKey(kami.encrypted_private_key);
-                    
-                    // 3. Check Account Location
-                    if (account && account.room !== nodeIndex) {
-                        const msg = `Automation stopped: Account is in Room #${account.room}, but target is Node #${nodeIndex}. Please move manually.`;
+                    // 3. Strict Check: Account Room == Kami Room (Must be together)
+                    if (account && account.room !== currentRoom) {
+                        const msg = `Location mismatch: Account is in Room #${account.room}, but Kami is in Room #${currentRoom}. They must be together to start harvest. Please move manually.`;
                         console.warn(`[Automation] 🛑 ${msg}`);
-                        
                         await logSystemEvent({
                             user_id: userId,
                             kami_index: kami.kami_index,
@@ -568,38 +558,45 @@ async function checkKami(profile: any) {
                             action: 'automation_stopped',
                             status: 'error',
                             message: `[Auto Harvest: ${walletName}] Automation stopped for ${kamiLabel} - ${msg}`,
-                            metadata: { currentRoom: account.room, targetNode: nodeIndex }
+                            metadata: { accountRoom: account.room, kamiRoom: currentRoom }
                         });
-                        return; // Stop processing for this Kami
+                        return;
+                    }
 
-                        /* 
-                        // Auto-move logic disabled for now
-                        console.log(`[Automation] Account is in Room #${account.room}, moving to Node #${nodeIndex}...`);
+                    // 4. Strict Check: At Target Node
+                    if (currentRoom !== nodeIndex) {
+                        const msg = `Wrong Location: Kami/Account is in Room #${currentRoom}, but target is Node #${nodeIndex}. Please move manually.`;
+                        console.warn(`[Automation] 🛑 ${msg}`);
                         await logSystemEvent({
                             user_id: userId,
                             kami_index: kami.kami_index,
                             kami_profile_id: profile.id,
-                            action: 'auto_move',
-                            status: 'info',
-                            message: `Account is in Room #${account.room}. Moving to Node #${nodeIndex} before harvest.`
+                            action: 'automation_stopped',
+                            status: 'error',
+                            message: `[Auto Harvest: ${walletName}] Automation stopped for ${kamiLabel} - ${msg}`,
+                            metadata: { currentRoom, targetNode: nodeIndex }
                         });
-
-                        const moveResult = await moveAccount(privateKey, nodeIndex);
-                        if (!moveResult.success) {
-                            throw new Error(`Failed to move account: ${moveResult.error}`);
-                        }
-                        console.log(`[Automation] Account moved successfully.`);
-                        */
+                        return;
                     }
 
-                    // Check Kami Location (Warn only, assuming account move might suffice or kami follows)
-                    if (currentRoom !== nodeIndex) {
-                        const msg = `Kami is in Room #${currentRoom}, target is Node #${nodeIndex}. Account moved to target.`;
-                        console.warn(`[Automation] ℹ️ ${msg}`);
-                        // We don't stop here, we assume StartHarvest might work if Account is in place
+                    // 5. Check Status (must be Resting)
+                    const { state } = await getKamiState(kamiId);
+                    if (state !== 0) { // 0 = Resting
+                        console.log(`[Automation] Kami #${kami.kami_index}: State is not Resting (State: ${state}). Skipping start.`);
+                        return; 
                     }
-                    // ------------------
 
+                    await logSystemEvent({
+                        user_id: userId,
+                        kami_index: kami.kami_index,
+                        kami_profile_id: profile.id,
+                        action: 'auto_start',
+                        status: 'info',
+                        message: `[Auto Harvest: ${walletName}] Checks passed. Starting harvest at Node #${nodeIndex}.`
+                    });
+
+                    const privateKey = await decryptPrivateKey(kami.encrypted_private_key);
+                    
                     const result = await startHarvest({
                         kamiId,
                         nodeIndex,
@@ -607,20 +604,37 @@ async function checkKami(profile: any) {
                     });
 
                     if (result.success) {
-                        await updateKamiProfile(profile.kamigotchi_id, {
-                            is_currently_harvesting: true,
-                            last_harvest_start: now.toISOString(),
-                            total_harvests: (profile.total_harvests || 0) + 1
-                        });
-                        await logSystemEvent({
-                            user_id: userId,
-                            kami_index: kami.kami_index,
-                            kami_profile_id: profile.id,
-                            action: 'auto_start',
-                            status: 'success',
-                            message: `[Auto Harvest: ${walletName}] Harvesting started for ${kamiLabel} at ${locationStr} (Harvest ID: ${result.harvestId || '?'}).`,
-                            metadata: { txHash: result.txHash, harvestId: result.harvestId }
-                        });
+                        // 6. Confirm On-Chain (Wait and Verify)
+                        await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5s
+                        const { state: newState } = await getKamiState(kamiId);
+                        
+                        if (newState === 1) { // Harvesting
+                            await updateKamiProfile(profile.kamigotchi_id, {
+                                is_currently_harvesting: true,
+                                last_harvest_start: now.toISOString(),
+                                total_harvests: (profile.total_harvests || 0) + 1
+                            });
+                            await logSystemEvent({
+                                user_id: userId,
+                                kami_index: kami.kami_index,
+                                kami_profile_id: profile.id,
+                                action: 'auto_start',
+                                status: 'success',
+                                message: `[Auto Harvest: ${walletName}] Harvesting started & confirmed for ${kamiLabel} at ${locationStr} (Harvest ID: ${result.harvestId || '?'}).`,
+                                metadata: { txHash: result.txHash, harvestId: result.harvestId }
+                            });
+                        } else {
+                            // Tx success but state not updated?
+                             await logSystemEvent({
+                                user_id: userId,
+                                kami_index: kami.kami_index,
+                                kami_profile_id: profile.id,
+                                action: 'auto_start_warning',
+                                status: 'warning',
+                                message: `[Auto Harvest: ${walletName}] Harvest Tx sent but state is not Harvesting yet. Will retry verification next cycle.`,
+                                metadata: { txHash: result.txHash }
+                            });
+                        }
                     } else {
                         throw new Error(result.error);
                     }

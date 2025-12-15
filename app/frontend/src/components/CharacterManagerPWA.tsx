@@ -22,11 +22,10 @@ import {
   removeFromWatchlist,
   searchAccount,
   getKamisByAccount,
-  type WatchlistItem
+  type WatchlistResult
 } from '../services/api';
 import { getUserSettings, getProfiles, invalidateUserCache, invalidateWalletCache } from '../lib/cachedApi';
 import { supabase } from '../services/supabase';
-import { findShortestPath } from '../utils/roomPathfinding';
 import { NODE_LIST } from '../assets/nodeList';
 import { getBackgroundList } from '../assets/backgrounds';
 import { getItemName } from '../utils/itemMapping';
@@ -63,7 +62,7 @@ const HEALING_ITEMS = [
 // Theme configurations
 const THEMES = {
   arcade: {
-    container: 'bg-gradient-to-br from-blue-600 to-blue-800 font-mono text-black',
+    container: 'bg-gradient-to-br from-blue-600 to-blue-800 text-black',
     card: 'bg-white border-4 border-gray-800 rounded',
     button: 'border-4 border-gray-800 rounded font-bold',
     input: 'bg-gray-800 border-2 border-gray-600 rounded text-white focus:border-blue-500',
@@ -73,7 +72,7 @@ const THEMES = {
     highlight: 'border-yellow-400 ring-4 ring-yellow-300',
   },
   pastel: {
-    container: 'bg-purple-100 font-sans text-gray-700',
+    container: 'bg-purple-100 text-gray-700',
     card: 'bg-white rounded-2xl shadow-md border border-purple-200',
     button: 'rounded-xl font-semibold shadow-sm transition-transform active:scale-95',
     input: 'bg-purple-50 border border-purple-200 rounded-xl text-gray-700 focus:border-purple-400 focus:ring-2 focus:ring-purple-200',
@@ -83,7 +82,7 @@ const THEMES = {
     highlight: 'ring-4 ring-purple-200 border-purple-400',
   },
   dark: {
-    container: 'bg-gray-900 font-sans text-gray-200',
+    container: 'bg-gray-900 text-gray-200',
     card: 'bg-gray-800 rounded-lg border border-gray-700',
     button: 'rounded-lg font-medium transition-colors',
     input: 'bg-gray-900 border border-gray-700 rounded-lg text-white focus:border-blue-500',
@@ -93,7 +92,7 @@ const THEMES = {
     highlight: 'border-blue-500 ring-2 ring-blue-500/50',
   },
   frosted: {
-    container: 'bg-cover bg-center bg-fixed font-sans text-gray-800 backdrop-blur-sm',
+    container: 'bg-cover bg-center bg-fixed text-gray-800 backdrop-blur-sm',
     card: 'bg-white/40 backdrop-blur-md border border-white/50 rounded-xl shadow-lg',
     button: 'rounded-xl backdrop-blur-sm border border-white/30 shadow-sm hover:bg-white/50',
     input: 'bg-white/50 border border-white/30 rounded-xl text-gray-800 placeholder-gray-500 focus:bg-white/70',
@@ -137,15 +136,6 @@ interface SystemLog {
   message: string;
   type: 'success' | 'error' | 'info' | 'warning';
   kami_index?: number;
-}
-
-interface LiveWatchlistKami {
-  id: string; // kamiEntityId
-  name: string;
-  state: string; // e.g., 'Harvesting', 'Resting'
-  room: number; // room index directly (as used in findShortestPath)
-  mediaURI?: string; // Optional, might not always be returned by live status
-  accountId: string; // The account ID this kami belongs to
 }
 
 interface OperatorWallet {
@@ -565,14 +555,15 @@ const CharacterManagerPWA = () => {
 
   // Watchlist State
   const [isWatchlistModalOpen, setIsWatchlistModalOpen] = useState(false);
-  const [watchlist, setWatchlist] = useState<WatchlistItem[]>([]);
-  const [watchlistLiveStatus, setWatchlistLiveStatus] = useState<Record<string, LiveWatchlistKami[]> | null>(null);
+  const [watchlist, setWatchlist] = useState<string[]>([]);
+  const [watchlistLiveStatus, setWatchlistLiveStatus] = useState<WatchlistResult[]>([]);
   const [loadingWatchlistLive, setLoadingWatchlistLive] = useState(false);
   const [watchlistSearchQuery, setWatchlistSearchQuery] = useState('');
-  const [watchlistSearchResults, setWatchlistSearchResults] = useState<any[]>([]);
   const [watchlistAccount, setWatchlistAccount] = useState<any>(null);
+  const [watchlistSearchResults, setWatchlistSearchResults] = useState<any[]>([]);
   const [loadingWatchlist, setLoadingWatchlist] = useState(false);
   const [minDistanceToTarget, setMinDistanceToTarget] = useState<number | null>(null);
+  const [collapsedAccounts, setCollapsedAccounts] = useState<Record<string, boolean>>({});
 
   // Function to refresh live status and calculate dynamic interval
   const refreshWatchlistStatus = useCallback(async () => {
@@ -580,26 +571,18 @@ const CharacterManagerPWA = () => {
     setLoadingWatchlistLive(true);
     try {
         const liveData = await getWatchlistLive(user.id);
-        setWatchlistLiveStatus(liveData as Record<string, LiveWatchlistKami[]>);
+        setWatchlistLiveStatus(liveData);
 
         // Calculate distances to determine next refresh interval
         let globalMinDistance = Infinity;
 
         // Iterate through all watchlist accounts
-        Object.values(liveData).forEach(accountKamis => {
-            accountKamis.forEach((targetKami: any) => {
-                // Check against ALL of my own Kamis
-                characters.forEach(myKami => {
-                    if (myKami.room && targetKami.room) {
-                        const path = findShortestPath(myKami.room.index, targetKami.room);
-                        if (path) {
-                             if (path.distance < globalMinDistance) {
-                                 globalMinDistance = path.distance;
-                             }
-                        }
-                    }
-                });
-            });
+        liveData.forEach(result => {
+             result.userAccounts.forEach(ua => {
+                 if (ua.distance !== null && ua.distance < globalMinDistance) {
+                     globalMinDistance = ua.distance;
+                 }
+             });
         });
 
         if (globalMinDistance !== Infinity) {
@@ -613,7 +596,7 @@ const CharacterManagerPWA = () => {
     } finally {
         setLoadingWatchlistLive(false);
     }
-  }, [user?.id, characters]);
+  }, [user?.id]);
 
   // Dynamic Polling Effect
   useEffect(() => {
@@ -626,34 +609,18 @@ const CharacterManagerPWA = () => {
               if (minDistanceToTarget === 0) {
                   delay = 120000; // Same Node: 2 minutes (120s)
               } else if (minDistanceToTarget < 3) {
-                  delay = 300000; // < 3 Hops: 5 minutes (300s) - WAIT, user said "less than 3 hops... refresh every 5mins". 
-                                  // And "same node... every 2 mins".
-                                  // Default logic implies if far away, maybe poll slower? 
-                                  // User instruction: "If < 3 hops away... refresh every 5mins".
-                                  // "If same node... refresh every 2mins".
-                                  // Implicitly, if > 3 hops, maybe default is longer? Or just keep standard.
-                                  // Let's stick to the explicit rules.
-                                  // Distance 0 -> 2 mins.
-                                  // Distance 1, 2 -> 5 mins.
-                                  // Distance >= 3 -> Default (let's say 10 mins or keep at 5).
-                                  // Actually, standard UI polling is often fast, but for blockchain data we want to be conservative.
-                                  // Let's set default to 10 mins if far away.
-                  delay = 300000;
+                  delay = 300000; // < 3 Hops: 5 minutes (300s)
               } else {
                   delay = 600000; // > 3 Hops: 10 minutes
               }
           }
 
-          // console.log(`[Watchlist] Next refresh in ${delay/1000}s (Min Dist: ${minDistanceToTarget})`);
           intervalId = setTimeout(() => {
               refreshWatchlistStatus();
               scheduleNextRefresh(); 
           }, delay);
       };
 
-      // Initial schedule if we have data, otherwise simple interval won't work well with dynamic delays.
-      // Better approach: Set a timeout that calls refresh, then sets another timeout.
-      
       if (authenticated && user) {
           scheduleNextRefresh();
       }
@@ -667,7 +634,7 @@ const CharacterManagerPWA = () => {
       getWatchlist(user.id).then(setWatchlist).catch(console.error);
       refreshWatchlistStatus(); // Initial fetch
     }
-  }, [authenticated, user, refreshWatchlistStatus]); // Removed refreshWatchlistStatus dependency to avoid loop if not handled carefully, relying on the separate polling effect
+  }, [authenticated, user, refreshWatchlistStatus]);
 
   // Search Account for Watchlist
   const handleWatchlistSearch = useCallback(async () => {
@@ -680,9 +647,12 @@ const CharacterManagerPWA = () => {
         const account = await searchAccount(watchlistSearchQuery);
         if (account) {
             setWatchlistAccount(account);
-            // Auto-fetch kamis for this account
-            const kamis = await getKamisByAccount(account.id);
-            setWatchlistSearchResults(kamis);
+            try {
+                const kamis = await getKamisByAccount(account.id);
+                setWatchlistSearchResults(kamis);
+            } catch (e) {
+                console.warn('Failed to fetch kamis for search result', e);
+            }
         }
     } catch (err: any) {
         alert(err.response?.data?.error || 'Account not found');
@@ -692,30 +662,25 @@ const CharacterManagerPWA = () => {
   }, [watchlistSearchQuery]);
 
   // Add/Remove Watchlist
-  const toggleWatchlistItem = useCallback(async (kami: any) => {
-      if (!user?.id || !watchlistAccount) return;
+  const toggleWatchlistAccount = useCallback(async (accountId: string) => {
+      if (!user?.id) return;
       
-      const existing = watchlist.find(w => w.kamiEntityId === kami.id);
+      const isAdded = watchlist.includes(accountId);
       
-      if (existing) {
+      if (isAdded) {
           // Remove
           try {
-              await removeFromWatchlist(user.id, kami.id);
-              setWatchlist(prev => prev.filter(w => w.kamiEntityId !== kami.id));
+              await removeFromWatchlist(user.id, accountId);
+              setWatchlist(prev => prev.filter(id => id !== accountId));
           } catch (e) { console.error(e); }
       } else {
           // Add
           try {
-              const item = await addToWatchlist(user.id, {
-                  accountId: watchlistAccount.id,
-                  accountName: watchlistAccount.name,
-                  kamiEntityId: kami.id,
-                  kamiName: kami.name
-              });
-              setWatchlist(prev => [item, ...prev]);
+              await addToWatchlist(user.id, accountId);
+              setWatchlist(prev => [...prev, accountId]);
           } catch (e) { console.error(e); }
       }
-  }, [user?.id, watchlist, watchlistAccount]);
+  }, [user?.id, watchlist]);
 
   // Fetch stamina when crafting modal opens
   useEffect(() => {
@@ -1604,101 +1569,79 @@ const CharacterManagerPWA = () => {
                     </button>
                 </div>
                 <div className="p-2 h-full overflow-y-auto space-y-2">
-                                {watchlist.length === 0 && !watchlistLiveStatus ? (
-                                    <div className="text-center opacity-50 p-4">
-                                        <p className="text-sm font-bold">Empty</p>
-                                        <p className="text-xs">Add from modal</p>
-                                    </div>
-                                ) : (
-                                    <div className="space-y-2">
-                                        {(() => {
-                                            const allLiveWatchlistKamis: LiveWatchlistKami[] = watchlistLiveStatus
-                                                ? Object.values(watchlistLiveStatus).flat()
-                                                : [];
-                    
-                                            // Filter to only show Kamis that are actually in the user's watchlist
-                                            // And sort them by their Kami Index for consistent display
-                                            const displayedKamis = watchlist
-                                                .map(watchedItem => {
-                                                    const liveKami = allLiveWatchlistKamis.find(lk => lk.id === watchedItem.kamiEntityId);
-                                                    return liveKami ? { ...liveKami, accountName: watchedItem.accountName } : null;
-                                                })
-                                                .filter((k): k is LiveWatchlistKami & { accountName: string | undefined } => k !== null)
-                                                .sort((a, b) => {
-                                                    const kamiIndexA = parseInt(a.name.replace('Kami #', ''));
-                                                    const kamiIndexB = parseInt(b.name.replace('Kami #', ''));
-                                                    return kamiIndexA - kamiIndexB;
-                                                });
-                    
-                                            if (displayedKamis.length === 0) {
-                                                return (
-                                                    <div className="text-center opacity-50 p-4">
-                                                        <p className="text-sm font-bold">No active watched Kamis</p>
-                                                        <p className="text-xs">Add from modal or they might be offline</p>
+                    {watchlist.length === 0 && watchlistLiveStatus.length === 0 ? (
+                        <div className="text-center opacity-50 p-4">
+                            <p className="text-sm font-bold">Empty</p>
+                            <p className="text-xs">Add accounts from modal</p>
+                        </div>
+                    ) : (
+                        <div className="space-y-2">
+                            {watchlistLiveStatus.map(result => {
+                                const { targetAccount, userAccounts } = result;
+                                const isCollapsed = collapsedAccounts[targetAccount.accountId];
+                                
+                                return (
+                                    <div key={targetAccount.accountId} className={`${currentTheme === 'arcade' ? 'bg-white border-2 border-gray-300' : 'bg-black/20 border border-white/20'} rounded text-xs overflow-hidden`}>
+                                        {/* Header */}
+                                        <div 
+                                            className="bg-gray-800 text-white p-1.5 flex justify-between items-center cursor-pointer hover:bg-gray-700"
+                                            onClick={() => setCollapsedAccounts(prev => ({ ...prev, [targetAccount.accountId]: !isCollapsed }))}
+                                        >
+                                            <div className="flex items-center gap-2">
+                                                <div className={`transition-transform text-[10px] ${isCollapsed ? '-rotate-90' : 'rotate-0'}`}>▼</div>
+                                                <div>
+                                                    <div className="font-bold text-sm">{targetAccount.accountName}</div>
+                                                    <div className="text-[10px] text-gray-400">
+                                                        {targetAccount.kamis.length > 0 
+                                                            ? (targetAccount.kamis[0].roomName || `Node ${targetAccount.kamis[0].roomIndex}`)
+                                                            : 'Unknown Location'}
                                                     </div>
-                                                );
-                                            }
-                    
-                                            return displayedKamis.map(targetKami => {
-                                                const myDistances = characters
-                                                    .filter(c => c.room)
-                                                    .map(c => {
-                                                        const path = findShortestPath(c.room.index, targetKami.room);
-                                                        return {
-                                                            id: c.id,
-                                                            name: c.name,
-                                                            isRunning: c.running,
-                                                            distance: path ? path.distance : Infinity
-                                                        };
-                                                    })
-                                                    .sort((a, b) => a.distance - b.distance)
-                                                    .slice(0, 3); // Show top 3 closest
-                    
-                                                return (
-                                                    <div key={targetKami.id} className={`${currentTheme === 'arcade' ? 'bg-white border-2 border-gray-300' : 'bg-black/20 border border-white/20'} rounded text-xs overflow-hidden`}>
-                                                        {/* Header */}
-                                                        <div className="bg-gray-800 text-white p-1.5 flex justify-between items-center">
+                                                </div>
+                                            </div>
+                                        </div>
+    
+                                        {/* Body */}
+                                        {!isCollapsed && (
+                                            <div className="p-1.5 space-y-2">
+                                                {/* Distances */}
+                                                <div className="space-y-1 border-b border-gray-100/10 pb-1.5">
+                                                    <div className="text-[9px] text-gray-500 font-bold uppercase">Distances:</div>
+                                                    {userAccounts.map(ua => (
+                                                        <div key={ua.accountId} className="flex justify-between items-center text-[10px]">
+                                                            {/* Try to match with user profiles if possible, or just ID */}
+                                                            <span className="text-gray-500 truncate w-20" title={ua.accountId}>
+                                                                {profiles.find(p => p.account_id === ua.accountId)?.name || ua.accountId.substring(0, 8)}
+                                                            </span>
+                                                            <span className={`font-mono font-bold ${
+                                                                ua.distance === 0 ? 'text-red-500 animate-pulse' :
+                                                                ua.distance !== null && ua.distance < 3 ? 'text-yellow-600' :
+                                                                'text-gray-400'
+                                                            }`}>
+                                                                {ua.distance === 0 ? 'HERE!!' : ua.distance === null ? 'Unknown' : `${ua.distance} hops`}
+                                                            </span>
+                                                        </div>
+                                                    ))}
+                                                </div>
+
+                                                {/* Kamis List */}
+                                                <div className="space-y-1">
+                                                    <div className="text-[9px] text-gray-500 font-bold uppercase">Kamis:</div>
+                                                    {targetAccount.kamis.map(kami => (
+                                                        <div key={kami.id} className="flex justify-between items-center">
                                                             <div className="flex items-center gap-2">
-                                                                <div className={`w-2 h-2 rounded-full ${targetKami.state === 'Harvesting' ? 'bg-green-500 animate-pulse' : 'bg-yellow-500'}`}></div>
-                                                                <span className="font-bold text-sm text-white">{targetKami.name}</span>
-                                                                <span className="text-xs text-gray-400">({targetKami.accountName || 'Unknown'})</span>
-                                                            </div>
-                                                            <div className="text-right">
-                                                                <div className="text-yellow-400 font-bold text-xs">
-                                                                    {NODE_LIST.find(n => n.id === targetKami.room)?.name || `Node ${targetKami.room}`}
-                                                                </div>
-                                                                <div className="text-[10px] text-gray-400 uppercase">{targetKami.state}</div>
+                                                                <div className={`w-2 h-2 rounded-full ${kami.state === 'Harvesting' ? 'bg-green-500' : 'bg-orange-500'}`} title={kami.state}></div>
+                                                                <span className="font-bold text-gray-700 dark:text-gray-300">{kami.name}</span>
                                                             </div>
                                                         </div>
-                    
-                                                        {/* My Relative Distances */}
-                                                        <div className="p-1.5 space-y-1">
-                                                            <div className="text-[9px] text-gray-500 font-bold uppercase">Distance from my kamis:</div>
-                                                            {myDistances.length === 0 ? (
-                                                                <div className="text-[10px] text-gray-500 italic">No active kamis to compare</div>
-                                                            ) : (
-                                                                myDistances.map(d => (
-                                                                    <div key={d.id} className="flex justify-between items-center text-[10px] border-b border-gray-100/10 last:border-0 pb-0.5 last:pb-0 gap-2">
-                                                                        <span className={`truncate flex-1 min-w-0 ${d.isRunning ? 'text-green-600 font-bold' : ''}`} title={d.name}>
-                                                                            {d.name}
-                                                                        </span>
-                                                                        <span className={`font-mono font-bold flex-shrink-0 ${
-                                                                            d.distance === 0 ? 'text-red-500 animate-pulse' :
-                                                                            d.distance < 3 ? 'text-yellow-600' :
-                                                                            'text-gray-400'
-                                                                        }`}>
-                                                                            {d.distance === 0 ? 'HERE!!' : d.distance === Infinity ? 'Unknown' : `${d.distance} hops`}
-                                                                        </span>
-                                                                    </div>
-                                                                ))
-                                                            )}
-                                                        </div>
-                                                    </div>
-                                                );
-                                            });
-                                        })()}
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
                                     </div>
-                                )}
+                                );
+                            })}
+                        </div>
+                    )}
                 </div>
             </div>
           </div>
@@ -1724,11 +1667,11 @@ const CharacterManagerPWA = () => {
             <div className="p-6 space-y-6">
                 {/* Search Section */}
                 <div className="bg-black/20 p-4 rounded-lg">
-                    <label className="block text-sm font-bold mb-2 text-gray-400">Add Account or Kami</label>
+                    <label className="block text-sm font-bold mb-2 text-gray-400">Add Account by ID</label>
                     <div className="flex gap-2">
                         <input 
                             type="text" 
-                            placeholder="e.g. 11835 (Account) or 3054 (Kami #)" 
+                            placeholder="e.g. 11835" 
                             className={`${theme.input} flex-1 p-2`}
                             value={watchlistSearchQuery}
                             onChange={(e) => setWatchlistSearchQuery(e.target.value)}
@@ -1746,44 +1689,42 @@ const CharacterManagerPWA = () => {
 
                 {/* Search Results */}
                 {watchlistAccount && (
-                    <div className="space-y-2">
+                    <div className="bg-gray-800 p-4 rounded border border-gray-700 space-y-4">
                         <div className="flex justify-between items-center border-b border-gray-700 pb-2">
                             <div>
-                                <div className="font-bold text-green-400">{watchlistAccount.name}</div>
-                                <div className="text-xs text-gray-500">Account ID: {watchlistAccount.id.substring(0, 10)}...</div>
+                                <div className="font-bold text-green-400 text-lg">{watchlistAccount.name}</div>
+                                <div className="text-xs text-gray-500">Account ID: {watchlistAccount.id}</div>
                             </div>
+                            <button 
+                                onClick={() => toggleWatchlistAccount(watchlistAccount.id)}
+                                className={`px-4 py-2 rounded font-bold ${
+                                    watchlist.includes(watchlistAccount.id)
+                                        ? 'bg-red-500 hover:bg-red-600 text-white' 
+                                        : 'bg-green-500 hover:bg-green-600 text-white'
+                                }`}
+                            >
+                                {watchlist.includes(watchlistAccount.id) ? 'REMOVE FROM WATCHLIST' : 'ADD TO WATCHLIST'}
+                            </button>
                         </div>
                         
-                        <div className="max-h-64 overflow-y-auto space-y-1 pr-2">
-                            {watchlistSearchResults.length === 0 ? (
-                                <div className="text-gray-500 italic p-2">No Kamis found for this account</div>
-                            ) : (
-                                watchlistSearchResults.map(kami => {
-                                    const isAdded = watchlist.some(w => w.kamiEntityId === kami.id);
-                                    return (
-                                        <div key={kami.id} className="flex justify-between items-center bg-gray-800 p-2 rounded border border-gray-700">
-                                            <div className="flex items-center gap-3">
-                                                <img 
-                                                    src={`https://i.test.kamigotchi.io/kami/${kami.mediaURI}.gif`} 
-                                                    className="w-8 h-8 bg-gray-700 rounded object-contain pixelated"
-                                                    style={{ imageRendering: 'pixelated' }}
-                                                />
-                                                <div>
-                                                    <div className="font-bold text-sm">{kami.name}</div>
-                                                    <div className="text-xs text-gray-500">#{kami.index} • Lv.{kami.level} • {kami.state}</div>
-                                                </div>
-                                            </div>
-                                            <button 
-                                                onClick={() => toggleWatchlistItem(kami)}
-                                                className={`w-8 h-8 flex items-center justify-center rounded font-bold ${isAdded ? 'bg-red-500 hover:bg-red-600 text-white' : 'bg-green-500 hover:bg-green-600 text-white'}`}
-                                                title={isAdded ? "Remove from Watchlist" : "Add to Watchlist"}
-                                            >
-                                                {isAdded ? '-' : '+'}
-                                            </button>
-                                        </div>
-                                    );
-                                })
-                            )}
+                        <div className="text-sm text-gray-400">
+                            <span className="font-bold">Kamis found:</span> {watchlistSearchResults.length}
+                        </div>
+                        
+                        <div className="max-h-48 overflow-y-auto space-y-1 pr-2">
+                             {watchlistSearchResults.map(kami => (
+                                <div key={kami.id} className="flex items-center gap-3 bg-gray-900/50 p-2 rounded">
+                                    <img 
+                                        src={`https://i.test.kamigotchi.io/kami/${kami.mediaURI}.gif`} 
+                                        className="w-8 h-8 bg-gray-700 rounded object-contain pixelated"
+                                        style={{ imageRendering: 'pixelated' }}
+                                    />
+                                    <div>
+                                        <div className="font-bold text-sm text-gray-300">{kami.name}</div>
+                                        <div className="text-xs text-gray-500">Lv.{kami.level} • {kami.state}</div>
+                                    </div>
+                                </div>
+                            ))}
                         </div>
                     </div>
                 )}
@@ -1791,7 +1732,7 @@ const CharacterManagerPWA = () => {
                 {/* Current Watchlist */}
                 <div>
                     <div className="flex justify-between items-center border-b border-gray-700 pb-2 mb-4">
-                        <h3 className="text-lg font-bold text-yellow-400">YOUR WATCHLIST</h3>
+                        <h3 className="text-lg font-bold text-yellow-400">YOUR WATCHLIST ({watchlist.length})</h3>
                         <button 
                             onClick={refreshWatchlistStatus}
                             disabled={loadingWatchlistLive}
@@ -1802,100 +1743,32 @@ const CharacterManagerPWA = () => {
                         </button>
                     </div>
                     
-                    {watchlist.length === 0 && !watchlistLiveStatus ? (
-                        <div className="text-gray-500 text-center p-4">No items in watchlist</div>
+                    {watchlist.length === 0 ? (
+                        <div className="text-gray-500 text-center p-4">No accounts in watchlist</div>
                     ) : (
                         <div className="grid gap-3">
-                            {(() => {
-                                const allLiveWatchlistKamis: LiveWatchlistKami[] = watchlistLiveStatus
-                                    ? Object.values(watchlistLiveStatus).flat()
-                                    : [];
+                            {/* Render based on Live Status if available, else IDs */}
+                            {watchlist.map(accountId => {
+                                const liveData = watchlistLiveStatus.find(r => r.targetAccount.accountId === accountId);
+                                const accountName = liveData ? liveData.targetAccount.accountName : `Account ${accountId}`;
+                                const kamisCount = liveData ? liveData.targetAccount.kamis.length : '?';
 
-                                const displayedKamis = watchlist
-                                    .map(watchedItem => {
-                                        const liveKami = allLiveWatchlistKamis.find(lk => lk.id === watchedItem.kamiEntityId);
-                                        return liveKami ? { ...liveKami, accountName: watchedItem.accountName } : null;
-                                    })
-                                    .filter((k): k is LiveWatchlistKami & { accountName: string | undefined } => k !== null)
-                                    .sort((a, b) => {
-                                        const kamiIndexA = parseInt(a.name.replace('Kami #', ''));
-                                        const kamiIndexB = parseInt(b.name.replace('Kami #', ''));
-                                        return kamiIndexA - kamiIndexB;
-                                    });
-
-                                if (displayedKamis.length === 0) {
-                                    return (
-                                        <div className="text-gray-500 text-center p-4">No active watched Kamis</div>
-                                    );
-                                }
-
-                                return displayedKamis.map(targetKami => {
-                                    const myDistances = characters
-                                        .filter(c => c.room)
-                                        .map(c => {
-                                            const path = findShortestPath(c.room.index, targetKami.room);
-                                            return {
-                                                id: c.id,
-                                                name: c.name,
-                                                isRunning: c.running,
-                                                distance: path ? path.distance : Infinity
-                                            };
-                                        })
-                                        .sort((a, b) => a.distance - b.distance)
-                                        .slice(0, 3); // Show top 3 closest
-
-                                    return (
-                                        <div key={targetKami.id} className="bg-gray-800 border-2 border-gray-700 rounded overflow-hidden">
-                                            {/* Header */}
-                                            <div className="bg-gray-700 p-2 flex justify-between items-center">
-                                                <div className="flex items-center gap-2">
-                                                    <div className={`w-2 h-2 rounded-full ${targetKami.state === 'Harvesting' ? 'bg-green-500 animate-pulse' : 'bg-yellow-500'}`}></div>
-                                                    <span className="font-bold text-sm text-white">{targetKami.name}</span>
-                                                    <span className="text-xs text-gray-400">({targetKami.accountName})</span>
-                                                </div>
-                                                <div className="flex items-center gap-2">
-                                                    <div className="text-right">
-                                                        <div className="text-yellow-400 font-bold text-xs">
-                                                            {NODE_LIST.find(n => n.id === targetKami.room)?.name || `Node ${targetKami.room}`}
-                                                        </div>
-                                                        <div className="text-[10px] text-gray-400 uppercase">{targetKami.state}</div>
-                                                    </div>
-                                                    <button 
-                                                        onClick={() => removeFromWatchlist(user!.id, targetKami.id).then(() => setWatchlist(p => p.filter(x => x.kamiEntityId !== targetKami.id)))}
-                                                        className="text-red-400 hover:text-white bg-gray-800 hover:bg-red-600 rounded p-1 ml-2 transition-colors"
-                                                        title="Remove from Watchlist"
-                                                    >
-                                                        <Trash2 className="w-4 h-4" />
-                                                    </button>
-                                                </div>
-                                            </div>
-
-                                            {/* Distances Body */}
-                                            <div className="p-2 bg-gray-900/50 space-y-1">
-                                                <div className="text-[10px] text-gray-500 font-bold uppercase mb-1">Distance from my kamis</div>
-                                                {myDistances.length === 0 ? (
-                                                    <div className="text-xs text-gray-500 italic">You have no active kamis</div>
-                                                ) : (
-                                                    myDistances.map(d => (
-                                                        <div key={d.id} className="flex justify-between items-center text-xs border-b border-gray-700/50 last:border-0 pb-1 last:pb-0 gap-2">
-                                                            <span className={`truncate flex-1 min-w-0 ${d.isRunning ? 'text-green-400' : 'text-gray-300'}`} title={d.name}>
-                                                                {d.name}
-                                                            </span>
-                                                            <span className={`font-mono font-bold flex-shrink-0 ${
-                                                                d.distance === 0 ? 'text-red-500 animate-pulse' : 
-                                                                d.distance < 3 ? 'text-yellow-500' : 
-                                                                'text-gray-500'
-                                                            }`}>
-                                                                {d.distance === 0 ? 'HERE!!' : d.distance === Infinity ? 'Unknown' : `${d.distance} hops`}
-                                                            </span>
-                                                        </div>
-                                                    ))
-                                                )}
-                                            </div>
+                                return (
+                                    <div key={accountId} className="bg-gray-800 border-2 border-gray-700 rounded overflow-hidden flex justify-between items-center p-3">
+                                        <div>
+                                            <div className="font-bold text-white">{accountName}</div>
+                                            <div className="text-xs text-gray-500">ID: {accountId} • {kamisCount} Kamis</div>
                                         </div>
-                                    );
-                                });
-                            })()}
+                                        <button 
+                                            onClick={() => toggleWatchlistAccount(accountId)}
+                                            className="text-red-400 hover:text-white bg-gray-700 hover:bg-red-600 rounded p-2 transition-colors"
+                                            title="Remove"
+                                        >
+                                            <Trash2 className="w-5 h-5" />
+                                        </button>
+                                    </div>
+                                );
+                            })}
                         </div>
                     )}
                 </div>
