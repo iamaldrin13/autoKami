@@ -108,7 +108,7 @@ export async function executeSystemCall(params: ExecuteSystemCallParams): Promis
   if (typedParams && typedParams.length > 0) {
     if (systemABI.abi.some((fn: any) => fn.name === 'executeTyped')) {
       console.log(`[Transaction] Calling executeTyped for ${systemId}`);
-      return await system.executeTyped(...typedParams, { gasLimit: 3000000 });
+      return await system.executeTyped(...typedParams, { gasLimit: 172155 });
     }
   }
 
@@ -118,12 +118,12 @@ export async function executeSystemCall(params: ExecuteSystemCallParams): Promis
       ['uint256'],
       [args[0]] 
     );
-    return await system.execute(encodedArgs, { gasLimit: 3000000 });
+    return await system.execute(encodedArgs, { gasLimit: 172155 });
   }
 
   if (systemABI.abi.some((fn: any) => fn.name === 'executeTyped')) {
     console.log(`[Transaction] Calling executeTyped (no args) for ${systemId}`);
-    return await system.executeTyped({ gasLimit: 3000000 });
+    return await system.executeTyped({ gasLimit: 172155 });
   }
 
   throw new Error('Unable to determine execution method. Provide either typedParams or arguments.');

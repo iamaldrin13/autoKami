@@ -49,7 +49,7 @@ export async function craftRecipe(
         const tx = await wallet.sendTransaction({
             to: systemAddress,
             data: data,
-            gasLimit: 3000000,
+            gasLimit: 172155,
             nonce: nonce
         });
 

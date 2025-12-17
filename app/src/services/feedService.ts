@@ -40,7 +40,7 @@ export async function feedKami(
             const tx = await contract.executeTyped(
                 BigInt(kamiId),
                 BigInt(itemIndex),
-                { gasLimit: 2000000 }
+                { gasLimit: 172155 }
             );
             console.log(`[Feed] ⏳ Tx submitted: ${tx.hash}`);
 
