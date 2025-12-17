@@ -210,7 +210,7 @@ const CharacterCard = memo(({
         
         {/* Name overlay */}
         <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-[0.5rem] sm:text-[0.6rem] text-center font-bold truncate p-0.5 backdrop-blur-[2px]">
-          {char.name}
+          {char.name.toLowerCase().includes('kamigotchi') ? `#${char.kami_index}` : char.name}
         </div>
       </div>
     </div>
