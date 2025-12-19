@@ -1737,13 +1737,14 @@ const CharacterManagerPWA = () => {
                             </div>
                             <button 
                                 onClick={() => toggleWatchlistAccount(watchlistAccount.id)}
-                                className={`px-4 py-2 rounded font-bold ${
+                                title={watchlist.includes(watchlistAccount.id) ? 'Remove from Watchlist' : 'Add to Watchlist'}
+                                className={`p-2 rounded font-bold transition-colors ${
                                     watchlist.includes(watchlistAccount.id)
                                         ? 'bg-red-500 hover:bg-red-600 text-white' 
                                         : 'bg-green-500 hover:bg-green-600 text-white'
                                 }`}
                             >
-                                {watchlist.includes(watchlistAccount.id) ? 'REMOVE FROM WATCHLIST' : 'ADD TO WATCHLIST'}
+                                {watchlist.includes(watchlistAccount.id) ? <Trash2 className="w-5 h-5" /> : <Plus className="w-5 h-5" />}
                             </button>
                         </div>
                         

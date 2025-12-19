@@ -114,9 +114,30 @@ export async function getWatchlistData(targetAccountId: string, userAccountIds: 
  */
 export async function addAccountToWatchlist(userId: string, targetAccountId: string) {
     console.log(`[WatchlistService] Adding account ${targetAccountId} to user ${userId}'s watchlist.`);
+    
+    // Fetch Kamis for this account to get a valid entity ID and Name for the DB constraint
+    const kamis = await getKamisByAccountId(targetAccountId);
+    
+    let kamiEntityId = '0'; // Default fallback
+    let kamiName = `Account ${targetAccountId}`;
+    
+    if (kamis && kamis.length > 0) {
+        kamiEntityId = kamis[0].id;
+        kamiName = kamis[0].name || kamiName;
+    } else {
+        console.warn(`[WatchlistService] Account ${targetAccountId} has no Kamis. Using default values.`);
+        // Depending on DB constraints, this might fail if we don't have a valid entity ID.
+        // But we proceed as the user requested to watch the account.
+    }
+
     const { data, error } = await supabase
-        .from('watchlist') // Assuming a 'watchlist' table exists or will be created
-        .insert({ user_id: userId, target_account_id: targetAccountId })
+        .from('watchlists')
+        .insert({ 
+            user_id: userId, 
+            account_id: targetAccountId,
+            kami_entity_id: kamiEntityId,
+            kami_name: kamiName
+        })
         .select();
 
     if (error) {
@@ -136,10 +157,10 @@ export async function addAccountToWatchlist(userId: string, targetAccountId: str
 export async function removeAccountFromWatchlist(userId: string, targetAccountId: string) {
     console.log(`[WatchlistService] Removing account ${targetAccountId} from user ${userId}'s watchlist.`);
     const { data, error } = await supabase
-        .from('watchlist')
+        .from('watchlists')
         .delete()
         .eq('user_id', userId)
-        .eq('target_account_id', targetAccountId);
+        .eq('account_id', targetAccountId);
 
     if (error) {
         console.error('[WatchlistService] Failed to remove account from watchlist:', error);
@@ -157,15 +178,15 @@ export async function removeAccountFromWatchlist(userId: string, targetAccountId
 export async function getUserWatchlist(userId: string): Promise<string[]> {
     console.log(`[WatchlistService] Retrieving watchlist for user ID: ${userId}`);
     const { data, error } = await supabase
-        .from('watchlist')
-        .select('target_account_id')
+        .from('watchlists')
+        .select('account_id')
         .eq('user_id', userId);
 
     if (error) {
         console.error('[WatchlistService] Failed to retrieve watchlist:', error);
         throw new Error(`Failed to retrieve watchlist: ${error.message}`);
     }
-    console.log(`[WatchlistService] Watchlist retrieved for user ${userId}: ${data.map((d: any) => d.target_account_id).join(', ')}`);
-    return data.map((item: any) => item.target_account_id);
+    console.log(`[WatchlistService] Watchlist retrieved for user ${userId}: ${data.map((d: any) => d.account_id).join(', ')}`);
+    return data.map((item: any) => item.account_id);
 }
 

@@ -113,7 +113,7 @@ export async function moveAccount(privateKey: string, roomIndex: number): Promis
             console.log(`[Account] Moving account to Room #${roomIndex}`);
             
             // executeTyped(uint32 roomIndex)
-            const tx = await contract.executeTyped(BigInt(roomIndex), { gasLimit: 172155 });
+            const tx = await contract.executeTyped(BigInt(roomIndex));
             console.log(`[Account] Move Tx submitted: ${tx.hash}`);
             
             const receipt = await tx.wait();
