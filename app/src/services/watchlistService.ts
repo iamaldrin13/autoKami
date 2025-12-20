@@ -1,7 +1,8 @@
-import { getKamisByAccountId, getAccountById } from './accountService.js';
+import { getAccountKamiLocationsLight, getAccountById } from './accountService.js';
 import { getRoomName, findShortestPath, PathResult } from '../utils/roomPathfinding.js';
-import { MappedKamiData, getKamiByIndex } from './kamiService.js';
+import { getKamiByIndex } from './kamiService.js';
 import supabase from './supabaseService.js';
+import { getKamisByAccountId } from './accountService.js'; // Keep for adding to watchlist logic only
 
 export interface KamiLocation {
     id: string;
@@ -48,14 +49,17 @@ export async function getAccountIdByKamiIndex(kamiIndex: number): Promise<string
  * @returns An array of KamiLocation objects.
  */
 export async function getAccountKamiLocations(accountId: string): Promise<KamiLocation[]> {
-    console.log(`[WatchlistService] Fetching Kami locations for account ID: ${accountId}`);
-    const kamis = await getKamisByAccountId(accountId);
+    console.log(`[WatchlistService] Fetching Kami locations (Light) for account ID: ${accountId}`);
+    // Use the optimized lightweight function
+    const kamis = await getAccountKamiLocationsLight(accountId);
+    
+    // Add Room Names if missing (Light function just sets "Node X")
     return kamis.map((kami: any) => ({
         id: kami.id,
         index: kami.index,
         name: kami.name,
-        roomIndex: kami.room.index,
-        roomName: kami.room.name,
+        roomIndex: kami.roomIndex,
+        roomName: getRoomName(kami.roomIndex) || kami.roomName,
         state: kami.state
     }));
 }
@@ -63,37 +67,32 @@ export async function getAccountKamiLocations(accountId: string): Promise<KamiLo
 /**
  * Calculates the distance between a target account's Kami and multiple user accounts' Kamis.
  * @param targetAccountId The ID of the account to track.
- * @param userAccountIds An array of user account IDs.
+ * @param userLocations Pre-fetched locations of user accounts.
  * @returns A WatchlistResult object containing target account info and distances to user accounts.
  */
-export async function getWatchlistData(targetAccountId: string, userAccountIds: string[]): Promise<WatchlistResult | null> {
-    console.log(`[WatchlistService] Getting watchlist data for target: ${targetAccountId}, user accounts: ${userAccountIds.join(', ')}`);
-
-    // 1. Get target account's Kami locations
+export async function getWatchlistData(
+    targetAccountId: string, 
+    userLocations: { accountId: string, roomIndex: number }[]
+): Promise<WatchlistResult | null> {
+    
+    // 1. Get target account's Kami locations (Light)
     const targetKamiLocations = await getAccountKamiLocations(targetAccountId);
     if (targetKamiLocations.length === 0) {
-        console.warn(`[WatchlistService] Target account ${targetAccountId} has no Kamis.`);
         return null;
     }
-    const targetKamiRoomIndex = targetKamiLocations[0].roomIndex; // Use the first Kami's room as the target's location for distance calculation
+    const targetKamiRoomIndex = targetKamiLocations[0].roomIndex;
 
     const targetAccountDetails = await getAccountById(targetAccountId);
     const targetAccountName = targetAccountDetails?.name || `Account ${targetAccountId}`;
 
-    const userAccountDistances = await Promise.all(userAccountIds.map(async userId => {
-        const userKamiLocations = await getAccountKamiLocations(userId);
+    // 2. Calculate distances using pre-fetched user locations (No RPC calls here!)
+    const userAccountDistances = userLocations.map(userLoc => {
         let distance: number | null = null;
-
-        if (userKamiLocations.length > 0) {
-            const userKamiRoomIndex = userKamiLocations[0].roomIndex; // Use the first Kami's room as the user's location
-            const pathResult = findShortestPath(userKamiRoomIndex, targetKamiRoomIndex);
-            distance = pathResult ? pathResult.distance : null;
-            console.log(`[WatchlistService] Distance from user ${userId} (Room ${userKamiRoomIndex}) to target ${targetAccountId} (Room ${targetKamiRoomIndex}): ${distance} hops`);
-        } else {
-            console.warn(`[WatchlistService] User account ${userId} has no Kamis.`);
-        }
-        return { accountId: userId, distance };
-    }));
+        const pathResult = findShortestPath(userLoc.roomIndex, targetKamiRoomIndex);
+        distance = pathResult ? pathResult.distance : null;
+        
+        return { accountId: userLoc.accountId, distance };
+    });
 
     return {
         targetAccount: {
@@ -105,6 +104,7 @@ export async function getWatchlistData(targetAccountId: string, userAccountIds: 
         userAccounts: userAccountDistances
     };
 }
+
 
 /**
  * Adds an account to the user's watchlist in Supabase.

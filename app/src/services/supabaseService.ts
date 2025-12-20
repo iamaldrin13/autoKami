@@ -445,6 +445,7 @@ export interface KamiProfile {
   feed_trigger_value?: number;
   feed_interval_minutes?: number;
   last_feed_at?: string | null;
+  auto_revive?: boolean;
   created_at: string;
   updated_at: string;
 }

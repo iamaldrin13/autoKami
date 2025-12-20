@@ -76,6 +76,51 @@ async function getKamiIndex(entityId: bigint): Promise<number | null> {
     return null;
 }
 
+// Optimized lightweight Kami fetch for Watchlist
+export async function getAccountKamiLocationsLight(accountId: string): Promise<any[]> {
+    try {
+        // OwnsKamiID component
+        const IDOwnsKamiComponent = loadAbi('IDOwnsKamiComponent.json');
+        const componentId = (components as any).OwnsKamiID.encodedID;
+        const componentAddress = await getComponentAddress(componentId);
+        const contract = new ethers.Contract(componentAddress, IDOwnsKamiComponent.abi, provider);
+        
+        const entities = await contract.getFunction('getEntitiesWithValue(uint256)')(BigInt(accountId));
+        
+        if (!entities || entities.length === 0) return [];
+
+        // Fetch basic data from GetterSystem (Single RPC per Kami, but much lighter than mapKamiData)
+        // struct Kami { uint256 id; uint32 index; string name; ... uint32 room; string state; ... }
+        const kamis = await Promise.all(entities.map(async (entityId: bigint) => {
+            try {
+                const kami = await getterContract.getKami(entityId);
+                const rawState = kami.state;
+                
+                // Map state string to UI expected format if needed, or pass as is.
+                // UI expects "Harvesting" or "Resting" usually? Or raw string.
+                // The frontend handles mapping, but let's be consistent.
+                
+                return {
+                    id: kami.id.toString(),
+                    index: Number(kami.index),
+                    name: kami.name,
+                    roomIndex: Number(kami.room),
+                    roomName: `Node ${kami.room}`, // Or fetch name if critical, but lightweight is key
+                    state: rawState
+                };
+            } catch (e) {
+                console.warn(`Failed to fetch lightweight data for entity ${entityId}:`, e);
+                return null;
+            }
+        }));
+
+        return kamis.filter(k => k !== null);
+    } catch (error) {
+        console.error(`[Account] Light fetch failed for ${accountId}:`, error);
+        return [];
+    }
+}
+
 export async function getAccountById(accountId: string): Promise<any> {
     try {
         const account = await getterContract.getAccount(BigInt(accountId));

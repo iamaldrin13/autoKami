@@ -49,6 +49,7 @@ export interface KamiProfile {
   // Health management
   min_health_threshold: number;
   auto_heal_enabled: boolean;
+  auto_revive?: boolean;
 
   // Scheduling
   harvest_schedule_type: 'continuous' | 'scheduled' | 'manual';

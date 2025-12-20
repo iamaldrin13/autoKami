@@ -7,6 +7,7 @@ import {
     getUserWatchlist,
     getAccountIdByKamiIndex
 } from '../services/watchlistService.js';
+import { getAccountKamiLocationsLight } from '../services/accountService.js';
 
 const router = express.Router();
 
@@ -74,9 +75,29 @@ router.get('/live', async (req, res) => {
         // 2. Get user's own accounts (for distance calc)
         const userAccountIds = await getUserAccountIds(userId);
 
+        // OPTIMIZATION: Pre-fetch user locations ONCE
+        // Fetch locations for all user accounts in parallel
+        const userLocationsRaw = await Promise.all(
+            userAccountIds.map(accId => getAccountKamiLocationsLight(accId))
+        );
+
+        // Flatten and map to { accountId, roomIndex }
+        // We only need one valid location per account (assuming all Kamis in account move together or using first one)
+        const userLocations: { accountId: string, roomIndex: number }[] = [];
+        
+        userLocationsRaw.forEach((locs, idx) => {
+            if (locs && locs.length > 0) {
+                userLocations.push({
+                    accountId: userAccountIds[idx],
+                    roomIndex: locs[0].roomIndex
+                });
+            }
+        });
+
         // 3. Fetch data for each target account
+        // Now passing pre-fetched userLocations
         const results = await Promise.all(
-            targetAccountIds.map((targetId: string) => getWatchlistData(targetId, userAccountIds))
+            targetAccountIds.map((targetId: string) => getWatchlistData(targetId, userLocations))
         );
 
         // Filter out nulls

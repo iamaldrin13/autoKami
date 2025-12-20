@@ -21,7 +21,6 @@ import {
   addToWatchlist,
   removeFromWatchlist,
   searchAccount,
-  getKamisByAccount,
   getKamiByIndex,
   type WatchlistResult
 } from '../services/api';
@@ -561,11 +560,17 @@ const CharacterManagerPWA = () => {
   const [loadingWatchlistLive, setLoadingWatchlistLive] = useState(false);
   const [watchlistSearchQuery, setWatchlistSearchQuery] = useState('');
   const [watchlistAccount, setWatchlistAccount] = useState<any>(null);
-  const [watchlistSearchResults, setWatchlistSearchResults] = useState<any[]>([]);
   const [watchlistSearchType, setWatchlistSearchType] = useState<'account' | 'kami'>('account');
   const [loadingWatchlist, setLoadingWatchlist] = useState(false);
   const [minDistanceToTarget, setMinDistanceToTarget] = useState<number | null>(null);
   const [collapsedAccounts, setCollapsedAccounts] = useState<Record<string, boolean>>({});
+
+  // Add log entry
+  const addLog = useCallback((message: string, type: 'info' | 'success' | 'warning' | 'error' = 'info') => {
+    const now = new Date();
+    const time = now.toLocaleTimeString('en-US', { hour12: false });
+    setSystemLogs(prev => [{ id: Math.random().toString(), time, message, type }, ...prev.slice(0, 49)]);
+  }, []);
 
   // Function to refresh live status and calculate dynamic interval
   const refreshWatchlistStatus = useCallback(async () => {
@@ -643,7 +648,6 @@ const CharacterManagerPWA = () => {
     if (!watchlistSearchQuery) return;
     setLoadingWatchlist(true);
     setWatchlistAccount(null);
-    setWatchlistSearchResults([]);
     
     try {
         let accountIdToSearch = watchlistSearchQuery;
@@ -668,12 +672,7 @@ const CharacterManagerPWA = () => {
         const account = await searchAccount(accountIdToSearch);
         if (account) {
             setWatchlistAccount(account);
-            try {
-                const kamis = await getKamisByAccount(account.id);
-                setWatchlistSearchResults(kamis);
-            } catch (e) {
-                console.warn('Failed to fetch kamis for search result', e);
-            }
+            // Optimization: Do NOT load Kamis here. Only account info is needed for adding.
         }
     } catch (err: any) {
         alert(err.response?.data?.error || 'Account not found');
@@ -699,9 +698,12 @@ const CharacterManagerPWA = () => {
           try {
               await addToWatchlist(user.id, accountId);
               setWatchlist(prev => [...prev, accountId]);
+              
+              const accountName = watchlistAccount?.id === accountId ? watchlistAccount.name : `Account ${accountId}`;
+              addLog(`[Watchlist] : Successfully added ${accountName} to the watchlist.`, 'success');
           } catch (e) { console.error(e); }
       }
-  }, [user?.id, watchlist]);
+  }, [user?.id, watchlist, watchlistAccount, addLog]);
 
   // Fetch stamina when crafting modal opens
   useEffect(() => {
@@ -885,13 +887,6 @@ const CharacterManagerPWA = () => {
       supabase.removeChannel(channel);
     };
   }, [user?.id]);
-
-  // Add log entry
-  const addLog = useCallback((message: string, type: 'info' | 'success' | 'warning' | 'error' = 'info') => {
-    const now = new Date();
-    const time = now.toLocaleTimeString('en-US', { hour12: false });
-    setSystemLogs(prev => [{ id: Math.random().toString(), time, message, type }, ...prev.slice(0, 49)]);
-  }, []);
 
   // Global Error Handler (Capture browser console errors to UI)
   useEffect(() => {
@@ -1749,23 +1744,7 @@ const CharacterManagerPWA = () => {
                         </div>
                         
                         <div className="text-sm text-gray-400">
-                            <span className="font-bold">Kamis found:</span> {watchlistSearchResults.length}
-                        </div>
-                        
-                        <div className="max-h-48 overflow-y-auto space-y-1 pr-2">
-                             {watchlistSearchResults.map(kami => (
-                                <div key={kami.id} className="flex items-center gap-3 bg-gray-900/50 p-2 rounded">
-                                    <img 
-                                        src={`https://i.test.kamigotchi.io/kami/${kami.mediaURI}.gif`} 
-                                        className="w-8 h-8 bg-gray-700 rounded object-contain pixelated"
-                                        style={{ imageRendering: 'pixelated' }}
-                                    />
-                                    <div>
-                                        <div className="font-bold text-sm text-gray-300">{kami.name}</div>
-                                        <div className="text-xs text-gray-500">Lv.{kami.level} • {kami.state}</div>
-                                    </div>
-                                </div>
-                            ))}
+                            Click <span className="font-bold">+</span> to add this account to your watchlist.
                         </div>
                     </div>
                 )}
