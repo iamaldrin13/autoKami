@@ -37,11 +37,21 @@ export async function feedKami(
             // The contract will revert if not, but we could check inventory here.
             // For now, assume logic in automationService checks inventory before calling this.
 
+    // Standard Gas Config
+    const GAS_LIMIT = 172155n;
+    const GAS_PRICE = 5000000n; // 0.005 gwei
+    
+    const overrides = {
+        gasLimit: GAS_LIMIT,
+        gasPrice: GAS_PRICE
+    };
+
     // Execute
     // executeTyped(uint256 kamiID, uint32 itemIndex)
     const tx = await contract.executeTyped(
       BigInt(kamiId),
-      BigInt(itemIndex)
+      BigInt(itemIndex),
+      overrides
     );
             console.log(`[Feed] ⏳ Tx submitted: ${tx.hash}`);
 

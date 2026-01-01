@@ -157,8 +157,17 @@ export async function moveAccount(privateKey: string, roomIndex: number): Promis
 
             console.log(`[Account] Moving account to Room #${roomIndex}`);
             
+            // Standard Gas Config
+            const GAS_LIMIT = 172155n;
+            const GAS_PRICE = 5000000n; // 0.005 gwei
+
+            const overrides = {
+                gasLimit: GAS_LIMIT,
+                gasPrice: GAS_PRICE
+            };
+
             // executeTyped(uint32 roomIndex)
-            const tx = await contract.executeTyped(BigInt(roomIndex));
+            const tx = await contract.executeTyped(BigInt(roomIndex), overrides);
             console.log(`[Account] Move Tx submitted: ${tx.hash}`);
             
             const receipt = await tx.wait();

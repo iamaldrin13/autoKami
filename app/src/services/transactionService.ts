@@ -105,10 +105,19 @@ export async function executeSystemCall(params: ExecuteSystemCallParams): Promis
   const systemABI = loadSystemABI(systemId);
   const system = new ethers.Contract(systemAddress, systemABI.abi, wallet);
 
+  // Standard Gas Config
+  const GAS_LIMIT = 172155n;
+  const GAS_PRICE = 5000000n; // 0.005 gwei
+
+  const overrides = {
+      gasLimit: GAS_LIMIT,
+      gasPrice: GAS_PRICE
+  };
+
   if (typedParams && typedParams.length > 0) {
     if (systemABI.abi.some((fn: any) => fn.name === 'executeTyped')) {
       console.log(`[Transaction] Calling executeTyped for ${systemId}`);
-      return await system.executeTyped(...typedParams);
+      return await system.executeTyped(...typedParams, overrides);
     }
   }
 
@@ -118,12 +127,12 @@ export async function executeSystemCall(params: ExecuteSystemCallParams): Promis
       ['uint256'],
       [args[0]] 
     );
-    return await system.execute(encodedArgs);
+    return await system.execute(encodedArgs, overrides);
   }
 
   if (systemABI.abi.some((fn: any) => fn.name === 'executeTyped')) {
     console.log(`[Transaction] Calling executeTyped (no args) for ${systemId}`);
-    return await system.executeTyped();
+    return await system.executeTyped(overrides);
   }
 
   throw new Error('Unable to determine execution method. Provide either typedParams or arguments.');

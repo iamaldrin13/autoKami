@@ -19,6 +19,10 @@ export interface CraftResult {
   error?: string;
 }
 
+// Standard Gas Config
+const GAS_LIMIT = 172155n;
+const GAS_PRICE = 5000000n; // 0.005 gwei
+
 export async function craftRecipe(
   recipeIndex: number, 
   amount: number, 
@@ -45,11 +49,17 @@ export async function craftRecipe(
              console.error(`[Crafting] Simulation failed:`, simError.reason || simError.message);
              // Try to extract a better error message
              const reason = simError.reason || (simError.data ? `Revert Data: ${simError.data}` : simError.message);
-             return { success: false, error: `Pre-check failed: ${reason}` };
+             // return { success: false, error: `Pre-check failed: ${reason}` };
+             console.warn(`[Crafting] Simulation failed but proceeding with transaction as requested (Test Mode).`);
         }
 
         // 2. Execute Transaction
-        const tx = await contract.executeTyped(recipeIndex, BigInt(amount));
+        const overrides = {
+            gasLimit: GAS_LIMIT,
+            gasPrice: GAS_PRICE
+        };
+
+        const tx = await contract.executeTyped(recipeIndex, BigInt(amount), overrides);
 
         console.log(`[Crafting] Tx submitted: ${tx.hash}`);
         

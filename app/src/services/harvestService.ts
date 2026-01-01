@@ -38,6 +38,10 @@ export interface HarvestResult {
   error?: string;
 }
 
+// Standard Gas Config
+const GAS_LIMIT = 172155n;
+const GAS_PRICE = 5000000n; // 0.005 gwei
+
 // Helper to find HarvestID on-chain
 async function findHarvestIdOnChain(kamiId: string): Promise<string | undefined> {
     try {
@@ -126,7 +130,18 @@ export async function startHarvest(params: HarvestParams): Promise<HarvestResult
         
         // Execute
         // executeTyped(uint256 kamiID, uint32 nodeIndex, uint256 taxerID, uint256 taxAmt)
-        const tx = await contract.executeTyped(BigInt(kamiId), BigInt(nodeIndex), BigInt(0), BigInt(0));
+        const overrides = {
+            gasLimit: GAS_LIMIT,
+            gasPrice: GAS_PRICE
+        };
+
+        const tx = await contract.executeTyped(
+            BigInt(kamiId), 
+            BigInt(nodeIndex), 
+            BigInt(0), 
+            BigInt(0), 
+            overrides
+        );
         console.log(`[Harvest] ⏳ Tx submitted: ${tx.hash}. Waiting for confirmation...`);
         
         const receipt = await tx.wait();
@@ -235,7 +250,13 @@ export async function stopHarvestByKamiId(kamiId: string, privateKey: string): P
 
         // Pass harvestId, not kamiId
         console.log(`[Harvest] 📤 Submitting stop transaction for Harvest #${harvestId}...`);
-        const tx = await contract.executeTyped(BigInt(harvestId));
+        
+        const overrides = {
+            gasLimit: GAS_LIMIT,
+            gasPrice: GAS_PRICE
+        };
+        
+        const tx = await contract.executeTyped(BigInt(harvestId), overrides);
         console.log(`[Harvest] ⏳ Tx submitted: ${tx.hash}`);
         
         const receipt = await tx.wait();
